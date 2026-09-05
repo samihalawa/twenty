@@ -97,6 +97,9 @@ const specs = [
         "                tools,\n                model: registeredModel.model,",
         "                tools,\n                output: agentSchema ? _ai.Output.object({ schema: (0, _ai.jsonSchema)(agentSchema, { validate: validateResponse }) }) : undefined,\n                model: registeredModel.model,"
       ],
+      ["            const textResponse = await (0, _ai.generateText)({","            const completedTaskSteps = [];\n            const textResponse = await (0, _ai.generateText)({"],
+      ["                onStepFinish: async (step)=>{\n                    const { hasNoMoreAvailableCredits: stepHasNoMoreAvailableCredits }","                onStepFinish: async (step)=>{\n                    completedTaskSteps.push(step);\n                    const { hasNoMoreAvailableCredits: stepHasNoMoreAvailableCredits }"],
+      ["            });\n            accumulatedUsage = textResponse.usage;","            }).catch(error => {\n                if (error?.usage) accumulatedUsage = error.usage;\n                return require('/opt/workflow-lazy-tools/schema-validation.cjs').recoverStructuredParse(error, validateResponse, _ai.NoObjectGeneratedError?.isInstance(error) === true, completedTaskSteps);\n            });\n            accumulatedUsage = textResponse.usage;"],
       [
         "            accumulatedUsage = textResponse.usage;",
         "            if (textResponse.finishReason === 'length') throw new Error('Agent output budget exhausted before a complete final response');\n            if (typeof textResponse.text !== 'string' || !textResponse.text.trim()) throw new Error('Agent produced no final response (finish=' + textResponse.finishReason + ', steps=' + (textResponse.steps?.length ?? 0) + ', toolCalls=' + (textResponse.toolCalls?.length ?? 0) + ', creditsExhausted=' + hasNoMoreAvailableCredits + ')');\n            accumulatedUsage = textResponse.usage;"

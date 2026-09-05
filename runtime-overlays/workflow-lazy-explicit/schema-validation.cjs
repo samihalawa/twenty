@@ -45,4 +45,14 @@ function describeExecutionError(error) {
   }
   return message + (details.size ? ' [' + [...details].join('; ') + ']' : '');
 }
-module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError};
+
+function recoverStructuredParse(error, validate, isNoObjectError, steps = []) {
+  if (!isNoObjectError || !validate || error.finishReason === 'length' ||
+      typeof error.text !== 'string' || Buffer.byteLength(error.text, 'utf8') > 262144) throw error;
+  let checked;
+  try { checked = parseValidatedResponse(error.text, validate); } catch { throw error; }
+  if (!checked?.success) throw error;
+  return {text: error.text, usage: error.usage, finishReason: error.finishReason, steps};
+}
+
+module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError, recoverStructuredParse};

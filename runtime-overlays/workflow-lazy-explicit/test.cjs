@@ -451,6 +451,17 @@ await test('both workflow modules provide the existing source build service',asy
  }
 });
 
+
+await test('native parse recovery accepts only bounded schema-valid text and preserves tool history',async()=>{
+ const {recoverStructuredParse}=require('./schema-validation.cjs'),validate=compileResponseSchema(exactSchema);
+ const steps=[{toolCalls:[{toolName:'read'}]}],error={text:'\x60\x60\x60json\n{"runStatus":"PARTIAL","processed":1}\n\x60\x60\x60',finishReason:'stop',usage};
+ const r=recoverStructuredParse(error,validate,true,steps);
+ assert.equal(r.steps,steps);assert.equal(r.usage,usage);assert.equal(r.text,error.text);
+ for(const e of [{...error,text:'{"runStatus":'}, {...error,text:'{"runStatus":"PARTIAL"}'}, {...error,text:'ordinary prose'}, {...error,text:' '.repeat(262145)}, {...error,finishReason:'length'}]) assert.throws(()=>recoverStructuredParse(e,validate,true),x=>x===e);
+ assert.throws(()=>recoverStructuredParse(error,validate,false),x=>x===error);
+ assert.throws(()=>recoverStructuredParse(error,undefined,true),x=>x===error);
+});
+
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
 
 })().catch(error=>{console.error(error);process.exitCode=1;});
