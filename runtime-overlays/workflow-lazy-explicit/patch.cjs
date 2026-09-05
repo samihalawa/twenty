@@ -59,6 +59,16 @@ const specs = [
         "            rolePermissionConfig,\n            requireExplicitObjectGrants: context.requireExplicitObjectGrants,\n            authContext: context.authContext,"
       ]
     ]
+  },
+  {
+    "path": "engine/twenty-orm/utils/apply-table-alias-on-where-condition.js",
+    "sha256": "de3fdfc9e949f4d464f0df4f0cfe35e46901aa5f3f2098eec5be47374d2361a5",
+    "changes": [
+      [
+        "        const conditionParts = condition.split('.');\n        if (conditionParts.length === 1) {\n            return condition;\n        }\n        const [tableNamePart, ...rest] = conditionParts;\n        return `${tableNamePart.replace(aliasName, tableName)}.${rest.join('.')}`;",
+        "        // Rewrite every qualified alias, without touching SQL literals or comments.\n        const quotedAlias = '\"' + aliasName.replace(/\"/g, '\"\"') + '\"';\n        const quotedTable = '\"' + tableName.replace(/\"/g, '\"\"') + '\"';\n        const tokens = /'(?:''|[^'])*'|--[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/|(\\$(?:[A-Za-z_][A-Za-z0-9_]*)?\\$)[\\s\\S]*?\\1|\"(?:\"\"|[^\"])*\"|[A-Za-z_][A-Za-z0-9_$]*/g;\n        return condition.replace(tokens, (token, dollarTag, offset) => {\n            if (!/^\\s*\\./.test(condition.slice(offset + token.length))) return token;\n            if (token === quotedAlias) return quotedTable;\n            if (token === aliasName) return tableName;\n            return token;\n        });"
+      ]
+    ]
   }
 ];
 
@@ -86,6 +96,6 @@ if (require.main === module) {
   for (const patch of patches) {
     if (fs.readFileSync(patch.absolutePath, 'utf8') !== patch.patched) throw new Error('Read-back failed: ' + patch.path);
   }
-  console.log('Applied and read back workflow-only lazy tools patch to ' + patches.length + ' files.');
+  console.log('Applied and read back workflow runtime repairs to ' + patches.length + ' files.');
 }
 module.exports = { preparePatches };
