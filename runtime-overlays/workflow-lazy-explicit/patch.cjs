@@ -91,6 +91,10 @@ const specs = [
       [
         "error instanceof Error ? error.message : 'Agent execution failed'",
         "require('/opt/workflow-lazy-tools/schema-validation.cjs').describeExecutionError(error)"
+      ],
+      [
+        "                tools,\n                model: registeredModel.model,",
+        "                tools,\n                output: agentSchema ? _ai.Output.object({ schema: (0, _ai.jsonSchema)(agentSchema, { validate: validateResponse }) }) : undefined,\n                model: registeredModel.model,"
       ]
     ]
   },

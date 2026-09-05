@@ -282,6 +282,8 @@ await test('schema is supplied to the original task execution, not only the form
  const schema={type:'object',properties:{id:{type:'string'},state:{type:'string'}},required:['id','state'],additionalProperties:false};
  await executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema}}});
  assert(calls[0].system.includes(JSON.stringify(schema)));
+ assert(calls[0].output, 'Primary call must request native structured output');
+ assert.equal(typeof calls[0].output.schema.validate,'function');
 });
 await test('valid task JSON bypasses the lossy second model call',async()=>{
  const prior=mockAi.generateText;
