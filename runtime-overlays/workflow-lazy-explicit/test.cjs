@@ -324,7 +324,7 @@ await test('nested SDK schema error reports the missing field without private da
 
 await test('paid OpenRouter GPT-OSS sets supported low reasoning effort',async()=>{
  const m={sdkPackage:'@ai-sdk/openai-compatible',model:{provider:'openrouter.chat',modelId:'openai/gpt-oss-20b'}};
- assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(m)),JSON.stringify({openaiCompatible:{reasoningEffort:'low'}}));
+ assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(m)),JSON.stringify({openaiCompatible:{reasoningEffort:'low'},openrouter:{provider:{only:['CoreWeave','DeepInfra'],order:['CoreWeave','DeepInfra'],require_parameters:true}}}));
  assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions({...m,model:{...m.model,modelId:'unrelated'}})),'{}');
 });
 await test('empty and output-budget-exhausted agent responses fail instead of false completion',async()=>{
@@ -369,6 +369,15 @@ await test('structured output capability is enabled only for the verified OpenRo
  f.buildOpenAiCompatibleProvider({name:'compatible',baseUrl,apiKey:'test'});
  }
  assert.deepEqual(opts.map(x=>x.supportsStructuredOutputs),[true,true,false,false]);
+});
+await test('installed compatible SDK forwards the paid provider allowlist into the actual request',async()=>{
+ const sdk=require('node:module').createRequire('/app/packages/twenty-server/dist/engine/metadata-modules/ai/ai-models/services/sdk-provider-factory.service.js')('@ai-sdk/openai-compatible');
+ const model=sdk.createOpenAICompatible({name:'openrouter',baseURL:'https://openrouter.ai/api/v1',apiKey:'test',supportsStructuredOutputs:true})('openai/gpt-oss-20b');
+ const options=modelConfig.getReasoningProviderOptions({sdkPackage:'@ai-sdk/openai-compatible',model});
+ const req=await model.getArgs({prompt:[{role:'user',content:[{type:'text',text:'test'}]}],providerOptions:options,maxOutputTokens:512,responseFormat:{type:'json',schema:{type:'object',properties:{ok:{type:'boolean'}},required:['ok'],additionalProperties:false}}});
+ assert.equal(req.args.response_format.type,'json_schema');assert.equal(req.args.reasoning_effort,'low');
+ assert.equal(JSON.stringify(req.args.provider.only),JSON.stringify(['CoreWeave','DeepInfra']));assert.equal(req.args.provider.require_parameters,true);
+ assert(!req.args.provider.only.includes('Darkbloom'));
 });
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
 
