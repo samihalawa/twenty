@@ -128,6 +128,40 @@ await test('all AI workflow calls select explicit lazy mode and preserve result 
  assert.equal(got.toolLoadingStrategy,'lazy-workflow-explicit');
  assert.equal(out.result.response,'ok');
 });
+
+const ModelConfig=moduleClass(PATCHES[4].patched,'AiModelConfigService',{
+ '../constants/ai-sdk-package.const':{AI_SDK_ANTHROPIC:'@ai-sdk/anthropic',AI_SDK_BEDROCK:'@ai-sdk/amazon-bedrock'},
+ '../../ai-agent/constants/agent-config.const':{AGENT_CONFIG:{REASONING_BUDGET_TOKENS:100}}
+});
+const modelConfig=new ModelConfig({},{});
+const groqModel={sdkPackage:'@ai-sdk/openai-compatible',modelsDevName:'groq',providerName:'groq_canary',supportsReasoning:true,model:{provider:'groq.chat',modelId:'openai/gpt-oss-120b'}};
+await test('Groq GPT-OSS uses SDK namespace instead of workspace provider key',async()=>{
+ assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(groqModel)),JSON.stringify({groq:{include_reasoning:false}}));
+});
+await test('Groq GPT-OSS 20B shares the compatible multi-round fix',async()=>{
+ assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions({...groqModel,model:{...groqModel.model,modelId:'openai/gpt-oss-20b'}})),JSON.stringify({groq:{include_reasoning:false}}));
+});
+await test('unrelated compatible models and provider identities remain unchanged',async()=>{
+ for(const m of [
+ {...groqModel,modelsDevName:'other'},
+ {...groqModel,model:{...groqModel.model,provider:'other.chat'}},
+ {...groqModel,model:{...groqModel.model,modelId:'qwen/qwen3.8-27b'}},
+ {...groqModel,sdkPackage:'@ai-sdk/openai'}
+ ])assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(m)),'{}');
+});
+await test('Anthropic existing reasoning options are preserved',async()=>{
+ const o=modelConfig.getReasoningProviderOptions({sdkPackage:'@ai-sdk/anthropic',supportsReasoning:true});
+ assert.equal(o.anthropic.thinking.budgetTokens,100);
+});
+await test('Bedrock existing reasoning options are preserved',async()=>{
+ const o=modelConfig.getReasoningProviderOptions({sdkPackage:'@ai-sdk/amazon-bedrock',supportsReasoning:true});
+ assert.equal(o.bedrock.thinking.budgetTokens,100);
+});
+await test('reasoning unsupported and unknown models preserve empty options',async()=>{
+ for(const m of [{sdkPackage:'@ai-sdk/anthropic',supportsReasoning:false},{sdkPackage:'@ai-sdk/amazon-bedrock',supportsReasoning:false},{sdkPackage:'unknown'}])
+ assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(m)),'{}');
+});
+
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
 
 })().catch(error=>{console.error(error);process.exitCode=1;});

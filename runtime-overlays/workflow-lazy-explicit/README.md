@@ -6,7 +6,9 @@ The workflow-only strategy preserves explicit object grants and carries them thr
 
 The overlay also repairs qualified table-alias rewriting in conditional mutations. Every matching qualified identifier is rewritten, including every bound used to implement a DateTime equality comparison. SQL literals and comments are preserved. The existing millisecond-bucket comparison and recursive condition handling remain unchanged.
 
-The Dockerfile pins the upstream image digest. Before modifying four compiled modules, the build checks their SHA-256 hashes, validates the proposed JavaScript and runs eight tool-loading regression tests plus ten alias-rewriting regression tests. A changed upstream source stops the build for review.
+The Dockerfile pins the upstream image digest. Before modifying five compiled modules, the build checks their SHA-256 hashes, validates the proposed JavaScript and runs eight tool-loading regression tests, ten alias-rewriting regression tests and six provider-option regression tests. A changed upstream source stops the build for review.
+
+For Groq GPT-OSS 20B and 120B through the OpenAI-compatible SDK, the overlay sets `include_reasoning: false` under the SDK's `groq` provider-options namespace. This prevents the SDK from carrying returned reasoning into a subsequent tool request as `reasoning_content`, a field Groq rejects. Other model families, providers and existing Anthropic/Bedrock reasoning options are unchanged. The registered provider key may differ from the SDK namespace.
 
 The tests use isolated dependencies and do not prove live provider availability, production permissions, successful CRM writes or end-to-end workflow completion. Deployments still require those checks, including a native conditional update that changes one matching row and a stale-timestamp retry that changes none. This patch does not add credits, alter provider accounts or automatically resume paused workflows.
 

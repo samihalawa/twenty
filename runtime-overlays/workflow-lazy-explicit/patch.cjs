@@ -69,7 +69,17 @@ const specs = [
         "        // Rewrite every qualified alias, without touching SQL literals or comments.\n        const quotedAlias = '\"' + aliasName.replace(/\"/g, '\"\"') + '\"';\n        const quotedTable = '\"' + tableName.replace(/\"/g, '\"\"') + '\"';\n        const tokens = /'(?:''|[^'])*'|--[^\\n]*|\\/\\*[\\s\\S]*?\\*\\/|(\\$(?:[A-Za-z_][A-Za-z0-9_]*)?\\$)[\\s\\S]*?\\1|\"(?:\"\"|[^\"])*\"|[A-Za-z_][A-Za-z0-9_$]*/g;\n        return condition.replace(tokens, (token, dollarTag, offset) => {\n            if (!/^\\s*\\./.test(condition.slice(offset + token.length))) return token;\n            if (token === quotedAlias) return quotedTable;\n            if (token === aliasName) return tableName;\n            return token;\n        });"
       ]
     ]
-  }
+  },
+{
+  "path": "engine/metadata-modules/ai/ai-models/services/ai-model-config.service.js",
+  "sha256": "2df3355b645603acff30f4735c52ddac8651cdd7281efecf695f9a1568719fa0",
+  "changes": [
+    [
+      "getReasoningProviderOptions(model) {",
+      "getReasoningProviderOptions(model) {\n        // Groq GPT-OSS rejects reasoning_content in subsequent tool rounds.\n        // The compatible SDK otherwise serializes returned reasoning into that field.\n        if (model.sdkPackage === '@ai-sdk/openai-compatible' &&\n            model.modelsDevName === 'groq' &&\n            model.model?.provider === 'groq.chat' &&\n            /^openai\\/gpt-oss-(20b|120b)$/.test(model.model?.modelId ?? '')) {\n            return { groq: { include_reasoning: false } };\n        }"
+    ]
+  ]
+}
 ];
 
 function preparePatches() {
