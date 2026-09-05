@@ -13,7 +13,8 @@ const specs = [
       [
         "operationType: _usageoperationtypeenum.UsageOperationType.AI_WORKFLOW_TOKEN\n",
         "operationType: _usageoperationtypeenum.UsageOperationType.AI_WORKFLOW_TOKEN,\n            toolLoadingStrategy: 'lazy-workflow-explicit'\n"
-      ]
+      ],
+      ["        return {\n            result: executionResult.result\n        };","        if (executionResult.result?.runStatus === 'BLOCKED') {\n            return { error: 'AI task blocked: ' + String(executionResult.result.reasons ?? 'No verified task result').slice(0,1000) };\n        }\n        return {\n            result: executionResult.result\n        };"]
     ]
   },
   {
@@ -98,7 +99,7 @@ const specs = [
       ],
       [
         "            accumulatedUsage = textResponse.usage;",
-        "            if (textResponse.finishReason === 'length') throw new Error('Agent output budget exhausted before a complete final response');\n            if (typeof textResponse.text !== 'string' || !textResponse.text.trim()) throw new Error('Agent produced no final response');\n            accumulatedUsage = textResponse.usage;"
+        "            if (textResponse.finishReason === 'length') throw new Error('Agent output budget exhausted before a complete final response');\n            if (typeof textResponse.text !== 'string' || !textResponse.text.trim()) throw new Error('Agent produced no final response (finish=' + textResponse.finishReason + ', steps=' + (textResponse.steps?.length ?? 0) + ', toolCalls=' + (textResponse.toolCalls?.length ?? 0) + ', creditsExhausted=' + hasNoMoreAvailableCredits + ')');\n            accumulatedUsage = textResponse.usage;"
       ]
     ]
   },
@@ -145,7 +146,27 @@ const specs = [
         "const buildPreview = (value, maxDepth, depth)=>{\n    // Match JSON serialization for both valid and invalid Date instances.\n    if ((0, _guards.isDate)(value)) {\n        return value.toJSON();\n    }"
       ]
     ]
-  }
+  },
+{
+  "path": "engine/core-modules/tool-provider/utils/build-tool-catalog-section.util.js",
+  "sha256": "3bd38c3f617ef51b78017d710fbf4602f467b97ee6d50ec5ca3b8d7f8a4c9e9b",
+  "changes": [
+    [
+      "const buildDatabaseCrudCatalogSection = (tools, preloadedSet, categoryLabel)=>{\n    const operationOrder = [];\n    const seenOps = new Set();\n    const objectToolsMap = new Map();\n    const standaloneTools = [];\n    for (const tool of tools){\n        if (tool.objectName && tool.operation) {\n            const ops = objectToolsMap.get(tool.objectName) ?? [];\n            ops.push(tool.operation);\n            objectToolsMap.set(tool.objectName, ops);\n            if (!seenOps.has(tool.operation)) {\n                seenOps.add(tool.operation);\n                operationOrder.push(tool.operation);\n            }\n        } else {\n            standaloneTools.push(tool);\n        }\n    }\n    const lines = [\n        `\\n#### ${categoryLabel} (${tools.length} tools)`\n    ];\n    if (objectToolsMap.size > 0) {\n        const objectNames = [\n            ...objectToolsMap.keys()\n        ].sort();\n        lines.push(`Operations per object:`);\n        lines.push(...operationOrder.map((op)=>`- \\`${op}_{object}\\``));\n        lines.push(`\\nObjects (${objectNames.length}):`);\n        lines.push(...objectNames.map((name)=>`- \\`${name}\\``));\n        const findManyExample = tools.find((t)=>t.operation === 'find_many');\n        const findOneExample = tools.find((t)=>t.operation === 'find_one' && t.objectName === findManyExample?.objectName);\n        const examplePart = findManyExample && findOneExample ? ` e.g. \\`${findManyExample.name}\\` / \\`${findOneExample.name}\\`` : '';\n        lines.push(`\\nTool name = operation + object name. *_many_* operations use the plural form, *_one_* use the singular form.${examplePart}`);\n    }\n    for (const tool of standaloneTools){\n        const status = preloadedSet.has(tool.name) ? ' ✓' : '';\n        lines.push(`- \\`${tool.name}\\`${status}`);\n    }\n    return lines.join('\\n');\n};\n",
+      "const buildDatabaseCrudCatalogSection = (tools, preloadedSet, categoryLabel)=>{\n    const lines = ['\\n#### ' + categoryLabel + ' (' + tools.length + ' tools)'];\n    lines.push('Exact permitted tool names (copy these verbatim; do not infer singular/plural forms or other operations):');\n    for (const tool of tools) {\n        lines.push('- `' + tool.name + '`' + (preloadedSet.has(tool.name) ? ' ✓' : ''));\n    }\n    return lines.join('\\n');\n};\n"
+    ]
+  ]
+},
+{
+  "path": "engine/metadata-modules/ai/ai-models/services/sdk-provider-factory.service.js",
+  "sha256": "6051c945228a9089abaa31579555364141a0561d2e4cd7eb3f6d4ff8257e538f",
+  "changes": [
+    [
+      "name: config.name ?? 'openai-compatible',\n            baseURL: config.baseUrl,",
+      "name: config.name ?? 'openai-compatible',\n            baseURL: config.baseUrl,\n            // OpenRouter supports schema-constrained response_format; other compatible providers keep their existing default.\n            supportsStructuredOutputs: /^https:\\/\\/openrouter\\.ai\\/api\\/v1\\/?$/.test(config.baseUrl),"
+    ]
+  ]
+}
 ];
 
 function preparePatches() {

@@ -337,6 +337,39 @@ await test('empty and output-budget-exhausted agent responses fail instead of fa
  }finally{mockAi.generateText=prior;}
 });
 
+await test('catalog lists exact authorized CRUD names without plural inference or invented writes',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('build-tool-catalog-section.util.js'));
+ const build=moduleClass(p.patched,'buildToolCatalogSection',{
+ 'twenty-shared/ai':{ToolCategory:{DATABASE_CRUD:'record'}},
+ 'twenty-shared/utils':{assertUnreachable:()=>{throw Error('unknown');}},
+ '../tools':{LEARN_TOOLS_TOOL_NAME:'learn_tools',EXECUTE_TOOL_TOOL_NAME:'execute_tool'}
+ });
+ const out=build([{name:'find_many_opportunities',objectName:'opportunity',operation:'find_many',category:'record'},{name:'find_one_opportunity',objectName:'opportunity',operation:'find_one',category:'record'}],[]);
+ assert(out.includes('`find_many_opportunities`'));assert(out.includes('`find_one_opportunity`'));
+ assert(!out.includes('`find_many_opportunity`'));assert(!out.includes('update'));assert(!out.includes('operation + object name'));
+});
+await test('workflow blocked business output is failed, not a green completed step',async()=>{
+ for(const runStatus of ['BLOCKED','PARTIAL','NO_WORK']){
+ const caller=new Workflow({executeAgent:async()=>({result:{runStatus,reasons:'Missing permitted query tool'}})},
+ {getExecutionContext:async()=>({authContext:base.authContext,isActingOnBehalfOfUser:false})},{},{findOne:async()=>agent});
+ const out=await caller.execute({currentStepId:'s',steps:[{settings:{input:{agentId:'agent',prompt:'Task'}}}],context:{},runInfo:{workspaceId:'workspace'}});
+ if(runStatus==='BLOCKED'){assert(out.error.includes('Missing permitted query tool'));assert.equal(out.result,undefined);}
+ else assert.equal(out.result.runStatus,runStatus);
+ }
+});
+await test('structured output capability is enabled only for the verified OpenRouter endpoint',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('sdk-provider-factory.service.js'));
+ const opts=[];
+ const Factory=moduleClass(p.patched,'SdkProviderFactoryService',{
+ '@ai-sdk/openai-compatible':{createOpenAICompatible:o=>{opts.push(o);return id=>({id});}},
+ '../constants/ai-sdk-package.const':{AI_SDK_OPENAI_COMPATIBLE:'compatible'}
+ });
+ const f=new Factory();
+ for(const baseUrl of ['https://openrouter.ai/api/v1','https://openrouter.ai/api/v1/','https://other.example/api/v1','https://openrouter.ai.evil.example/api/v1']){
+ f.buildOpenAiCompatibleProvider({name:'compatible',baseUrl,apiKey:'test'});
+ }
+ assert.deepEqual(opts.map(x=>x.supportsStructuredOutputs),[true,true,false,false]);
+});
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
 
 })().catch(error=>{console.error(error);process.exitCode=1;});
