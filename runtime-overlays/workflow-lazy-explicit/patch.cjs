@@ -184,11 +184,71 @@ const specs = [
   "changes": [
     [
       "})=>{const{objectMetadataItem:o}=i({objectNameSingular:e}),",
-      "})=>{const runStatusRef=(0,m.useRef)(null);const{objectMetadataItem:o}=i({objectNameSingular:e}),"
+      "})=>{const runStatusRef=(0,m.useRef)(null),refreshedRunRef=(0,m.useRef)(null);const{objectMetadataItem:o}=i({objectNameSingular:e}),"
     ],
     [
       "variables:{objectRecordId:r},client:n});return{record:",
-      "variables:{objectRecordId:r},client:n,...(e===\"workflowRun\"?{fetchPolicy:\"cache-and-network\",pollInterval:3000,skipPollAttempt:()=>[\"COMPLETED\",\"FAILED\",\"STOPPED\"].includes(runStatusRef.current)}:{})});runStatusRef.current=d?.[e]?.status??null;return{record:"
+      "variables:{objectRecordId:r},client:n,...(e===\"workflowRun\"?{fetchPolicy:\"cache-and-network\",pollInterval:3000,skipPollAttempt:()=>[\"COMPLETED\",\"FAILED\",\"STOPPED\"].includes(runStatusRef.current)}:{})});runStatusRef.current=d?.[e]?.status??null;(0,m.useEffect)(()=>{if(e!==\"workflowRun\"||!r||t||!f||d?.[e]?.id!==r||![\"COMPLETED\",\"FAILED\",\"STOPPED\"].includes(runStatusRef.current)||refreshedRunRef.current===r)return;refreshedRunRef.current=r;Promise.resolve(n.refetchQueries({include:\"active\"})).catch(()=>{});},[e,r,t,f,d?.[e]?.status,n]);return{record:"
+    ]
+  ]
+},
+{
+  "path": "modules/workflow/workflow-executor/workflow-actions/logic-function/logic-function.workflow-action.js",
+  "sha256": "1b9d6f76103a54ba85d9d8040f04b5e607506dc1f0115de3306bba4540193b94",
+  "changes": [
+    [
+      "const _logicfunctionexecutorservice = require(\"../../../../../engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service\");",
+      "const _logicfunctionexecutorservice = require(\"../../../../../engine/metadata-modules/logic-function/services/logic-function-from-source.service\");"
+    ],
+    [
+      "this.logicFunctionExecutorService.execute({\n            logicFunctionId:",
+      "this.logicFunctionExecutorService.executeOneFromSource({\n            id:"
+    ],
+    [
+      "typeof _logicfunctionexecutorservice.LogicFunctionExecutorService === \"undefined\" ? Object : _logicfunctionexecutorservice.LogicFunctionExecutorService",
+      "typeof _logicfunctionexecutorservice.LogicFunctionFromSourceService === \"undefined\" ? Object : _logicfunctionexecutorservice.LogicFunctionFromSourceService"
+    ]
+  ]
+},
+{
+  "path": "modules/workflow/workflow-executor/workflow-actions/code/code.workflow-action.js",
+  "sha256": "124a1157c19c8b33e89efefef21188f7de3d0386c8e18baa472483aeb0de6a13",
+  "changes": [
+    [
+      "const _logicfunctionexecutorservice = require(\"../../../../../engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service\");",
+      "const _logicfunctionexecutorservice = require(\"../../../../../engine/metadata-modules/logic-function/services/logic-function-from-source.service\");"
+    ],
+    [
+      "this.logicFunctionExecutorService.execute({\n            logicFunctionId:",
+      "this.logicFunctionExecutorService.executeOneFromSource({\n            id:"
+    ],
+    [
+      "typeof _logicfunctionexecutorservice.LogicFunctionExecutorService === \"undefined\" ? Object : _logicfunctionexecutorservice.LogicFunctionExecutorService",
+      "typeof _logicfunctionexecutorservice.LogicFunctionFromSourceService === \"undefined\" ? Object : _logicfunctionexecutorservice.LogicFunctionFromSourceService"
+    ]
+  ]
+},
+{
+  "path": "modules/workflow/workflow-executor/workflow-actions/logic-function/logic-function-action.module.js",
+  "sha256": "1202bb69da8acff319bd3c98e97dd2200f125337d613da10dc1160c5ae9f6626",
+  "changes": [
+    [
+      "const _common = require(\"@nestjs/common\");",
+      "const _common = require(\"@nestjs/common\");\nconst _sourceFunctionModule = require(\"../../../../../engine/metadata-modules/logic-function/logic-function.module\");"
+    ],
+    [
+      "imports: [\n            _workspacemanyorallflatentitymapscachemodule.",
+      "imports: [\n            _sourceFunctionModule.LogicFunctionModule,\n            _workspacemanyorallflatentitymapscachemodule."
+    ]
+  ]
+},
+{
+  "path": "modules/workflow/workflow-executor/workflow-actions/code/code-action.module.js",
+  "sha256": "543bb98b6f035e911131ddad882a8d1ec8546aed234146b64dd3a9d51ccaa7fb",
+  "changes": [
+    [
+      "../../../../../engine/core-modules/logic-function/logic-function.module",
+      "../../../../../engine/metadata-modules/logic-function/logic-function.module"
     ]
   ]
 }

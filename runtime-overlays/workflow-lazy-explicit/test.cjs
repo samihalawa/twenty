@@ -391,9 +391,10 @@ await test('AI log sanitizer preserves nested Dates and still removes noisy keys
 });
 function runHookFixture(){
  const p=PATCHES.find(x=>x.path.includes('useFindOneRecord-'));const body='const J='+p.patched.split(',J=')[1].split(';export')[0]+';J';
- let opts=null,data=null;const ref={current:null};
- const hook=vm.runInNewContext(body,{m:{useRef:()=>ref,useMemo:fn=>fn()},i:()=>({objectMetadataItem:{id:'object'}}),v:()=>({recordGqlFields:{}}),q:()=>({}),L:()=>({findOneRecordQuery:'query'}),G:()=>({canReadObjectRecords:true}),M:x=>x!=null,y:(q,o)=>{opts=o;return{data,loading:false,refetch:()=>{}};},h:({recordNode})=>recordNode});
- return {render:(objectNameSingular,status,extra={})=>{data=status?{[objectNameSingular]:{id:'run',status}}:null;hook({objectNameSingular,objectRecordId:'run',...extra});return opts;}};
+ let opts=null,data=null,index=0,refetches=0;const refs=[],effects=[];
+ const client={refetchQueries:async arg=>{assert.equal(arg.include,'active');refetches++;}};
+ const hook=vm.runInNewContext(body,{Promise,m:{useRef:value=>{const idx=index++;return refs[idx]??=( {current:value});},useMemo:fn=>fn(),useEffect:fn=>effects.push(fn)},i:()=>({objectMetadataItem:{id:'object'}}),v:()=>({recordGqlFields:{}}),q:()=>client,L:()=>({findOneRecordQuery:'query'}),G:()=>({canReadObjectRecords:true}),M:x=>x!=null,y:(q,o)=>{opts=o;return{data,loading:false,refetch:()=>{}};},h:({recordNode})=>recordNode});
+ return {count:()=>refetches,render:(objectNameSingular,status,extra={})=>{index=0;data=status?{[objectNameSingular]:{id:extra.dataId||extra.objectRecordId||'run',status}}:null;hook({objectNameSingular,objectRecordId:'run',...extra});while(effects.length)effects.shift()();return opts;}};
 }
 await test('run panel uses current network data and bounded refresh only for workflow runs',async()=>{
  const f=runHookFixture(),o=f.render('workflowRun','RUNNING');assert.equal(o.fetchPolicy,'cache-and-network');assert.equal(o.pollInterval,3000);assert.equal(o.skipPollAttempt(),false);
@@ -409,6 +410,45 @@ await test('other objects retain previous query behavior',async()=>{
 });
 await test('missing IDs and explicit skips preserve native skip behavior',async()=>{
  const f=runHookFixture();assert.equal(f.render('workflowRun',null,{objectRecordId:''}).skip,true);assert.equal(f.render('workflowRun','RUNNING',{skip:true}).skip,true);
+});
+
+
+await test('terminal run refreshes active dashboard queries once',async()=>{
+ const f=runHookFixture();f.render('workflowRun','RUNNING');assert.equal(f.count(),0);f.render('workflowRun','COMPLETED');assert.equal(f.count(),1);f.render('workflowRun','COMPLETED');assert.equal(f.count(),1);
+});
+await test('failed and stopped runs also refresh partial saved results',async()=>{
+ for(const status of ['FAILED','STOPPED']){const f=runHookFixture();f.render('workflowRun',status);assert.equal(f.count(),1);f.render('workflowRun',status);assert.equal(f.count(),1);}
+});
+await test('new run gets its own single dashboard refresh',async()=>{
+ const f=runHookFixture();f.render('workflowRun','COMPLETED');f.render('workflowRun','RUNNING',{objectRecordId:'second'});assert.equal(f.count(),1);f.render('workflowRun','COMPLETED',{objectRecordId:'second'});assert.equal(f.count(),2);
+});
+await test('skip and stale cached identity never trigger dashboard refresh',async()=>{
+ const f=runHookFixture();f.render('workflowRun','COMPLETED',{skip:true});f.render('workflowRun','COMPLETED',{objectRecordId:''});f.render('workflowRun','COMPLETED',{dataId:'wrong'});f.render('opportunity','COMPLETED');assert.equal(f.count(),0);
+});
+
+for(const [suffix,className,guard]of [['logic-function/logic-function.workflow-action.js','LogicFunctionWorkflowAction','isWorkflowLogicFunctionAction'],['code/code.workflow-action.js','CodeWorkflowAction','isWorkflowCodeAction']]){
+ await test(className+' uses source-aware executor exactly once with exact identity and payload',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith(suffix));let calls=0,logs=0;
+ const Action=moduleClass(p.patched,className,{
+ '@nestjs/common':{Injectable:()=>x=>x,Logger:class{warn(){}}},
+ 'twenty-shared/utils':{resolveInput:x=>x,isDefined:x=>x!=null},
+ '../../utils/find-step-or-throw.util':{findStepOrThrow:({steps})=>steps[0]},
+ [suffix.startsWith('code')?'./guards/is-workflow-code-action.guard':'./guards/is-workflow-logic-function-action.guard']:{[guard]:()=>true},
+ '../../../../../engine/metadata-modules/flat-entity/utils/find-flat-entity-by-id-in-flat-entity-maps.util':{findFlatEntityByIdInFlatEntityMaps:()=>({workflowActionTriggerSettings:{}})},
+ './utils/build-code-step-log.util':{buildCodeStepLog:x=>x}
+ });
+ const service={executeOneFromSource:async args=>{calls++;assert.equal(args.id,'exact');assert.equal(args.workspaceId,'workspace');assert.equal(args.payload.message,'test');return{data:{fresh:true}};}};
+ const auxiliary={getOrRecomputeManyOrAllFlatEntityMaps:async()=>({flatLogicFunctionMaps:{}}),setStepLog:async()=>{logs++;}};
+ const action=new Action(service,auxiliary),args={currentStepId:'step',steps:[{settings:{input:{logicFunctionId:'exact',logicFunctionInput:{message:'test'}}}}],context:{},runInfo:{workspaceId:'workspace',workflowRunId:'run'}};
+ assert.equal((await action.execute(args)).result.fresh,true);assert.equal(calls,1);if(suffix.startsWith('code'))assert.equal(logs,1);
+ service.executeOneFromSource=async()=>{throw Error('BUILD_FAILED');};
+ await assert.rejects(action.execute(args),/BUILD_FAILED/);assert.equal(calls,1);
+ });
+}
+await test('both workflow modules provide the existing source build service',async()=>{
+ for(const suffix of ['logic-function/logic-function-action.module.js','code/code-action.module.js']){
+  const p=PATCHES.find(x=>x.path.endsWith(suffix));assert(p.patched.includes('engine/metadata-modules/logic-function/logic-function.module'));
+ }
 });
 
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
