@@ -276,6 +276,49 @@ await test('diagnostic traversal is bounded and accepts non-JSON error bodies',a
  assert.equal(describeExecutionError(e),'Upstream failed [HTTP 503]');
 });
 
+
+await test('schema is supplied to the original task execution, not only the formatter',async()=>{
+ calls.length=0;
+ const schema={type:'object',properties:{id:{type:'string'},state:{type:'string'}},required:['id','state'],additionalProperties:false};
+ await executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema}}});
+ assert(calls[0].system.includes(JSON.stringify(schema)));
+});
+await test('valid task JSON bypasses the lossy second model call',async()=>{
+ const prior=mockAi.generateText;
+ const exact={runStatus:'PARTIAL',processed:1};
+ mockAi.generateText=async args=>{calls.push(args);return {text:JSON.stringify(exact),usage,steps:[]}};
+ try{
+  calls.length=0;
+  const out=await executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema:exactSchema}}});
+  assert.equal(JSON.stringify(out.result),JSON.stringify(exact));assert.equal(calls.length,1);assert.equal(calls[0].maxOutputTokens,4096);
+ }finally{mockAi.generateText=prior;}
+});
+await test('invalid task JSON fails before a formatter can invent missing fields',async()=>{
+ const prior=mockAi.generateText;
+ mockAi.generateText=async args=>{calls.push(args);return {text:'{"runStatus":"PARTIAL"}',usage,steps:[]}};
+ try{
+  calls.length=0;
+  await assert.rejects(executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema:exactSchema}}}),/processed/);
+  assert.equal(calls.length,1);
+ }finally{mockAi.generateText=prior;}
+});
+await test('JSON parsing retains false zero empty strings and strict fenced values',async()=>{
+ const {parseValidatedResponse}=require('./schema-validation.cjs');
+ const validate=compileResponseSchema({type:'object',properties:{flag:{type:'boolean'},n:{type:'number'},s:{type:'string'}},required:['flag','n','s'],additionalProperties:false});
+ for(const text of ['{"flag":false,"n":0,"s":""}','\x60\x60\x60json\n{"flag":false,"n":0,"s":""}\n\x60\x60\x60']){
+  assert.equal(JSON.stringify(parseValidatedResponse(text,validate).value),'{"flag":false,"n":0,"s":""}');
+ }
+ assert.equal(parseValidatedResponse('Ordinary existing prose result',validate),undefined);
+ for(const text of ['{"flag":', '{"flag":"false","n":0,"s":""}', '{"flag":false,"n":0,"s":"","extra":true}'])assert.throws(()=>parseValidatedResponse(text,validate));
+});
+await test('nested SDK schema error reports the missing field without private data',async()=>{
+ const {describeExecutionError}=require('./schema-validation.cjs');
+ const result=compileResponseSchema(exactSchema)({runStatus:'private-source-data'});
+ const error=new Error('No object generated: response did not match schema.');error.cause=result.error;
+ const message=describeExecutionError(error);
+ assert(message.includes('processed'));assert(!message.includes('private-source-data'));
+});
+
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
 
 })().catch(error=>{console.error(error);process.exitCode=1;});

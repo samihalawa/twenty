@@ -66,7 +66,11 @@ const specs = [
       ],
       [
         "if (agentSchema) {",
-        "if (validateResponse) {"
+        "const directResponse = validateResponse ? require('/opt/workflow-lazy-tools/schema-validation.cjs').parseValidatedResponse(textResponse.text, validateResponse) : undefined;\n            if (directResponse !== undefined) result = directResponse.value;\n            if (validateResponse && directResponse === undefined) {"
+      ],
+      [
+        "system: `${baseSystemPrompt}\\n\\n${agent ? (0, _utils.tipTapDocumentToMarkdown)(agent.prompt) : ''}${toolCatalogSection}`,",
+        "system: `${baseSystemPrompt}\\n\\n${agent ? (0, _utils.tipTapDocumentToMarkdown)(agent.prompt) : ''}${toolCatalogSection}` + (agentSchema ? '\\nAfter completing the task and any necessary tools, return only a complete JSON value conforming exactly to this schema. Do not omit required fields, use alternative keys, or invent missing facts.\\n' + JSON.stringify(agentSchema) : ''),"
       ],
       [
         "system: _structuredoutputsystempromptconst.STRUCTURED_OUTPUT_SYSTEM_PROMPT,",

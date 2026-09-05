@@ -7,10 +7,24 @@ function compileResponseSchema(schema) {
   return value => {
     if (check(value)) return {success: true, value};
     const details = (check.errors || []).slice(0, 8).map(e => ({
-      path: e.instancePath, keyword: e.keyword, message: e.message
+      path: e.instancePath, keyword: e.keyword, message: e.message, ...(e.params?.missingProperty ? {property: e.params.missingProperty} : {})
     }));
     return {success: false, error: new Error('Agent response violates its JSON schema: ' + JSON.stringify(details))};
   };
+}
+function parseValidatedResponse(text, validate) {
+  if (typeof text !== 'string') return undefined;
+  const trimmed = text.trim();
+  const fenced = /^\x60\x60\x60(?:json)?\s*([\s\S]*?)\s*\x60\x60\x60$/i.exec(trimmed);
+  const json = fenced ? fenced[1].trim() : trimmed;
+  // Preserve the existing formatter only for ordinary non-JSON prose.
+  // Never let a second model silently repair or reinterpret malformed JSON.
+  if (!fenced && !/^[{\[]/.test(json)) return undefined;
+  let value;
+  try { value = JSON.parse(json); } catch { throw new Error('Agent response JSON is malformed'); }
+  const checked = validate(value);
+  if (!checked.success) throw checked.error;
+  return checked;
 }
 function describeExecutionError(error) {
   const message = error instanceof Error ? error.message : 'Agent execution failed';
@@ -19,6 +33,7 @@ function describeExecutionError(error) {
   let current = error;
   for (let depth = 0; current && depth < 5 && !seen.has(current); depth++) {
     seen.add(current);
+    if (typeof current.message === 'string' && current.message.startsWith('Agent response violates its JSON schema: ')) details.add(current.message.slice(0, 1600));
     if (Number.isInteger(current.statusCode)) details.add('HTTP ' + current.statusCode);
     let body;
     try { body = typeof current.responseBody === 'string' ? JSON.parse(current.responseBody) : current.responseBody; } catch {}
@@ -30,4 +45,4 @@ function describeExecutionError(error) {
   }
   return message + (details.size ? ' [' + [...details].join('; ') + ']' : '');
 }
-module.exports = {compileResponseSchema, describeExecutionError};
+module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError};
