@@ -324,7 +324,7 @@ await test('nested SDK schema error reports the missing field without private da
 
 await test('paid OpenRouter GPT-OSS sets supported low reasoning effort',async()=>{
  const m={sdkPackage:'@ai-sdk/openai-compatible',model:{provider:'openrouter.chat',modelId:'openai/gpt-oss-20b'}};
- assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(m)),JSON.stringify({openaiCompatible:{reasoningEffort:'low'},openrouter:{provider:{only:['CoreWeave','DeepInfra'],order:['CoreWeave','DeepInfra'],require_parameters:true}}}));
+ assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(m)),JSON.stringify({openaiCompatible:{reasoningEffort:'low'},openrouter:{provider:{only:['CoreWeave','DeepInfra'],order:['CoreWeave','DeepInfra'],require_parameters:true,max_price:{prompt:0.05,completion:0.20}}}}));
  assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions({...m,model:{...m.model,modelId:'unrelated'}})),'{}');
 });
 await test('empty and output-budget-exhausted agent responses fail instead of false completion',async()=>{
@@ -376,7 +376,7 @@ await test('installed compatible SDK forwards the paid provider allowlist into t
  const options=modelConfig.getReasoningProviderOptions({sdkPackage:'@ai-sdk/openai-compatible',model});
  const req=await model.getArgs({prompt:[{role:'user',content:[{type:'text',text:'test'}]}],providerOptions:options,maxOutputTokens:512,responseFormat:{type:'json',schema:{type:'object',properties:{ok:{type:'boolean'}},required:['ok'],additionalProperties:false}}});
  assert.equal(req.args.response_format.type,'json_schema');assert.equal(req.args.reasoning_effort,'low');
- assert.equal(JSON.stringify(req.args.provider.only),JSON.stringify(['CoreWeave','DeepInfra']));assert.equal(req.args.provider.require_parameters,true);
+ assert.equal(JSON.stringify(req.args.provider.only),JSON.stringify(['CoreWeave','DeepInfra']));assert.equal(req.args.provider.require_parameters,true);assert.equal(req.args.provider.max_price.prompt,0.05);assert.equal(req.args.provider.max_price.completion,0.20);
  assert(!req.args.provider.only.includes('Darkbloom'));
 });
 
