@@ -95,6 +95,10 @@ const specs = [
       [
         "                tools,\n                model: registeredModel.model,",
         "                tools,\n                output: agentSchema ? _ai.Output.object({ schema: (0, _ai.jsonSchema)(agentSchema, { validate: validateResponse }) }) : undefined,\n                model: registeredModel.model,"
+      ],
+      [
+        "            accumulatedUsage = textResponse.usage;",
+        "            if (textResponse.finishReason === 'length') throw new Error('Agent output budget exhausted before a complete final response');\n            if (typeof textResponse.text !== 'string' || !textResponse.text.trim()) throw new Error('Agent produced no final response');\n            accumulatedUsage = textResponse.usage;"
       ]
     ]
   },
@@ -128,7 +132,7 @@ const specs = [
     "changes": [
       [
         "getReasoningProviderOptions(model) {",
-        "getReasoningProviderOptions(model) {\n        // Groq GPT-OSS rejects reasoning_content in subsequent tool rounds.\n        // The compatible SDK otherwise serializes returned reasoning into that field.\n        if (model.sdkPackage === '@ai-sdk/openai-compatible' &&\n            model.modelsDevName === 'groq' &&\n            model.model?.provider === 'groq.chat' &&\n            /^openai\\/gpt-oss-(20b|120b)$/.test(model.model?.modelId ?? '')) {\n            return { groq: { include_reasoning: false } };\n        }"
+        "getReasoningProviderOptions(model) {\n        // Keep paid OpenRouter GPT-OSS tool rounds within a modest output budget.\n        if (model.sdkPackage === '@ai-sdk/openai-compatible' &&\n            model.model?.provider === 'openrouter.chat' &&\n            /^openai\\/gpt-oss-(20b|120b)$/.test(model.model?.modelId ?? '')) {\n            return { openaiCompatible: { reasoningEffort: 'low' } };\n        }\n        // Groq GPT-OSS rejects reasoning_content in subsequent tool rounds.\n        // The compatible SDK otherwise serializes returned reasoning into that field.\n        if (model.sdkPackage === '@ai-sdk/openai-compatible' &&\n            model.modelsDevName === 'groq' &&\n            model.model?.provider === 'groq.chat' &&\n            /^openai\\/gpt-oss-(20b|120b)$/.test(model.model?.modelId ?? '')) {\n            return { groq: { include_reasoning: false } };\n        }"
       ]
     ]
   },

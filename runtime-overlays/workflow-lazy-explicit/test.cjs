@@ -26,7 +26,7 @@ const metaContexts=[],calls=[];
 const usage={inputTokens:5,outputTokens:2,totalTokens:7};
 const mockAi={
  jsonSchema:(x,options)=>({jsonSchema:x,...options}),Output:{object:x=>x},stepCountIs:()=>()=>false,
- generateText:async args=>{calls.push(args);return args.output?{output:{id:'op-1',state:'unchanged'},usage,steps:[]}:{text:'Verified op-1',usage,steps:[]}}
+ generateText:async args=>{calls.push(args);return args.output&&!args.tools?{output:{id:'op-1',state:'unchanged'},usage,steps:[]}:{text:'Verified op-1',usage,steps:[]}}
 };
 const overrides={
 '/opt/workflow-lazy-tools/schema-validation.cjs':require('./schema-validation.cjs'),
@@ -319,6 +319,22 @@ await test('nested SDK schema error reports the missing field without private da
  const error=new Error('No object generated: response did not match schema.');error.cause=result.error;
  const message=describeExecutionError(error);
  assert(message.includes('processed'));assert(!message.includes('private-source-data'));
+});
+
+
+await test('paid OpenRouter GPT-OSS sets supported low reasoning effort',async()=>{
+ const m={sdkPackage:'@ai-sdk/openai-compatible',model:{provider:'openrouter.chat',modelId:'openai/gpt-oss-20b'}};
+ assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(m)),JSON.stringify({openaiCompatible:{reasoningEffort:'low'}}));
+ assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions({...m,model:{...m.model,modelId:'unrelated'}})),'{}');
+});
+await test('empty and output-budget-exhausted agent responses fail instead of false completion',async()=>{
+ const prior=mockAi.generateText;
+ try{
+  for(const response of [{text:'',finishReason:'stop'},{text:' ',finishReason:'stop'},{text:'partial',finishReason:'length'}]){
+   mockAi.generateText=async args=>({ ...response,usage,steps:[] });
+   await assert.rejects(executor.executeAgent(execArgs),/no final response|output budget exhausted/);
+  }
+ }finally{mockAi.generateText=prior;}
 });
 
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
