@@ -7,7 +7,7 @@ const fallback=new Proxy({}, {get:()=>function(){return ()=>undefined}});
 const decorators={Injectable:()=>()=>{},Inject:()=>()=>{},Logger:class{log(){} warn(){} error(){}}};
 function moduleClass(source,name,overrides={}){
  const exports={};
- vm.runInNewContext(source,{exports,require:(key)=>key==='@nestjs/common'?decorators:overrides[key]??fallback,Set,Map,Date,String,Object,Math,Error},{timeout:2000});
+ vm.runInNewContext(source,{exports,require:(key)=>key==='@nestjs/common'?decorators:overrides[key]??fallback,Set,Map,Date,String,Object,Math,Error,Buffer},{timeout:2000});
  return exports[name];
 }
 const Registry=moduleClass(PATCHES[2].patched,'ToolRegistryService',{
@@ -25,10 +25,11 @@ const registry=new Registry([provider],{dispatch:async(d,a,c)=>{dispatches.push(
 const metaContexts=[],calls=[];
 const usage={inputTokens:5,outputTokens:2,totalTokens:7};
 const mockAi={
- jsonSchema:x=>x,Output:{object:x=>x},stepCountIs:()=>()=>false,
+ jsonSchema:(x,options)=>({jsonSchema:x,...options}),Output:{object:x=>x},stepCountIs:()=>()=>false,
  generateText:async args=>{calls.push(args);return args.output?{output:{id:'op-1',state:'unchanged'},usage,steps:[]}:{text:'Verified op-1',usage,steps:[]}}
 };
 const overrides={
+'/opt/workflow-lazy-tools/schema-validation.cjs':require('./schema-validation.cjs'),
 'ai':mockAi,
 'twenty-shared/constants':{AUTO_SELECT_SMART_MODEL_ID:'auto'},
 'twenty-shared/utils':{isDefined:x=>x!=null,isNonEmptyArray:x=>Array.isArray(x)&&x.length>0,tipTapDocumentToMarkdown:()=>''},
@@ -163,6 +164,116 @@ await test('Bedrock existing reasoning options are preserved',async()=>{
 await test('reasoning unsupported and unknown models preserve empty options',async()=>{
  for(const m of [{sdkPackage:'@ai-sdk/anthropic',supportsReasoning:false},{sdkPackage:'@ai-sdk/amazon-bedrock',supportsReasoning:false},{sdkPackage:'unknown'}])
  assert.equal(JSON.stringify(modelConfig.getReasoningProviderOptions(m)),'{}');
+});
+
+
+const previewFn=moduleClass(PATCHES[5].patched,'jsonPreview',{
+ '@sniptt/guards':require('node:module').createRequire('/app/packages/twenty-server/dist/engine/core-modules/tool/utils/json-preview.util.js')('@sniptt/guards'),
+ 'twenty-shared/utils':{isDefined:x=>x!=null},
+ './format-bytes.util':{formatBytes:x=>String(x)}
+});
+const knownDate=new Date('2026-09-05T03:00:00.000Z');
+await test('top-level preview Date is ISO text',async()=>assert.equal(previewFn(knownDate),knownDate.toISOString()));
+await test('nested record-array preview Date is ISO text',async()=>assert.equal(previewFn({records:[{startsAt:knownDate}]}).records[0].startsAt,knownDate.toISOString()));
+await test('invalid preview Date matches JSON null semantics',async()=>assert.equal(previewFn(new Date('invalid')),null));
+await test('preview scalar array and null behavior is retained',async()=>assert.equal(JSON.stringify(previewFn({values:[1,'text',null]})),JSON.stringify({values:[1,'text',null]})));
+const spillSource=require('node:fs').readFileSync('/app/packages/twenty-server/dist/engine/core-modules/tool/services/tool-output-spill.service.js','utf8');
+const Spill=moduleClass(spillSource,'ToolOutputSpillService',{
+ 'twenty-shared/types':{FileFolder:{AgentChat:'agent-chat'}},
+ 'twenty-shared/utils':{isDefined:x=>x!=null},
+ 'uuid':{v4:()=> 'test-spill-id'},
+ 'class-validator':{isObject:x=>x!==null&&typeof x==='object'},
+ '../tools/output-navigation-tool/constants/max-inline-tool-output-bytes.constant':{MAX_INLINE_TOOL_OUTPUT_BYTES:256},
+ '../tools/output-navigation-tool/constants/output-navigation-tool-names.constant':{OUTPUT_NAVIGATION_TOOL_NAMES:[]},
+ '../utils/format-bytes.util':{formatBytes:x=>String(x)},
+ '../utils/json-preview.util':{jsonPreview:previewFn}
+});
+let storedSpill;
+const spill=new Spill({writeFile:async args=>{storedSpill=JSON.parse(args.sourceFile.toString());return{id:'test-spill-id'};}},{findWorkspaceTwentyStandardAndCustomApplicationOrThrow:async()=>({workspaceCustomFlatApplication:{universalIdentifier:'test-app'}})});
+await test('oversized tool-output preview and stored JSON retain the same Date',async()=>{
+ const output={success:true,records:[{startsAt:knownDate,content:'x'.repeat(1000)}]};
+ const result=await spill.spillIfTooLarge(output,{workspaceId:'test-workspace'},{toolName:'find_records'});
+ assert.equal(result.result.spilled,true);
+ assert.equal(result.result.preview.records[0].startsAt,knownDate.toISOString());
+ assert.equal(storedSpill.records[0].startsAt,knownDate.toISOString());
+});
+await test('small tool output retains its existing non-spilled contract',async()=>{
+ const output={startsAt:knownDate};
+ const result=await spill.spillIfTooLarge(output,{workspaceId:'test-workspace'},{toolName:'find_records'});
+ assert.equal(result,output);
+});
+
+
+const {compileResponseSchema}=require('./schema-validation.cjs');
+const exactSchema={type:'object',properties:{runStatus:{type:'string'},processed:{type:'number'}},required:['runStatus','processed'],additionalProperties:false};
+await test('formatter receives exact schema even when provider only supports JSON mode',async()=>{
+ calls.length=0;
+ const schema={type:'object',properties:{id:{type:'string'},state:{type:'string'}},required:['id','state'],additionalProperties:false};
+ await executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema}}});
+ assert(calls[1].system.includes(JSON.stringify(schema)));
+ assert.equal(typeof calls[1].output.schema.validate,'function');
+ assert.equal(calls[1].output.schema.validate({id:'op-1'}).success,false);
+});
+await test('invalid agent schema fails before any model or tool execution',async()=>{
+ calls.length=0;
+ await assert.rejects(executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema:{type:'nonsense'}}}}));
+ assert.equal(calls.length,0);
+});
+await test('wrong output keys cannot be marked successful even if provider or SDK skips validation',async()=>{
+ calls.length=0;
+ await assert.rejects(executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema:exactSchema}}}),/violates its JSON schema/);
+ assert.equal(calls.length,2);
+});
+await test('required fields, extra fields and types are enforced without coercion',async()=>{
+ const v=compileResponseSchema(exactSchema);
+ for(const input of [{},{analysis:'wrong'}, {runStatus:'PARTIAL',processed:'1'}, {runStatus:'PARTIAL',processed:1,other:true}]) assert.equal(v(input).success,false);
+ const valid={runStatus:'PARTIAL',processed:1};
+ assert.equal(v(valid).value,valid);
+});
+await test('nested arrays enums refs and constraints are validated',async()=>{
+ const v=compileResponseSchema({type:'object',properties:{items:{type:'array',minItems:1,items:{$ref:'#/$defs/item'}}},required:['items'],additionalProperties:false,$defs:{item:{type:'object',properties:{status:{enum:['OK']},n:{type:'integer',minimum:1}},required:['status','n'],additionalProperties:false}}});
+ assert.equal(v({items:[{status:'OK',n:1}]}).success,true);
+ for(const input of [{items:[]},{items:[{status:'NO',n:1}]},{items:[{status:'OK',n:0}]},{items:[{status:'OK',n:1.5}]}])assert.equal(v(input).success,false);
+});
+await test('unknown validation keywords and unavailable external refs fail closed',async()=>{
+ for(const schema of [{type:'object',requiredField:['id']},{$ref:'https://invalid.example/schema.json'},{type:'string',format:'unknown-format'}])assert.throws(()=>compileResponseSchema(schema));
+});
+await test('validation errors do not echo private response values',async()=>{
+ const v=compileResponseSchema(exactSchema);
+ const result=v({runStatus:123,processed:'private-secret-payload'});
+ assert.equal(result.success,false);assert(!result.error.message.includes('private-secret-payload'));
+});
+await test('structured formatting preserves provider reasoning options',async()=>{
+ const prior=overrides['../../ai-chat/utils/provider-options.util'].getCallLevelProviderOptions;
+ overrides['../../ai-chat/utils/provider-options.util'].getCallLevelProviderOptions=x=>x.providerOptions;
+ executor.aiModelConfigService.getReasoningProviderOptions=()=>({groq:{include_reasoning:false}});
+ calls.length=0;
+ await executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema:{type:'object'}}}});
+ assert.equal(JSON.stringify(calls[1].providerOptions),JSON.stringify({groq:{include_reasoning:false}}));
+ overrides['../../ai-chat/utils/provider-options.util'].getCallLevelProviderOptions=prior;
+});
+
+
+await test('all ten current structured agent schema shapes compile and reject the observed wrong envelope',async()=>{
+ const schemas=[{"type":"object","required":["result","opportunityId","emailAiState","sourceMessageId","sourceActivityId","personId","companyId","artifactIds","draftIds","nextAction","reason","readback"],"properties":{"reason":{"type":"string"},"result":{"type":"string"},"draftIds":{"type":"string"},"personId":{"type":"string"},"readback":{"type":"string"},"companyId":{"type":"string"},"nextAction":{"type":"string"},"artifactIds":{"type":"string"},"emailAiState":{"type":"string"},"opportunityId":{"type":"string"},"sourceMessageId":{"type":"string"},"sourceActivityId":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["ready","recipient","subject","body","reason"],"properties":{"body":{"type":"string"},"ready":{"type":"boolean"},"reason":{"type":"string"},"subject":{"type":"string"},"recipient":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["reconciliationStatus","personId","companyId","opportunityId","externalActivityId","opportunityMutation","queueState","crmReadback"],"properties":{"personId":{"type":"string"},"companyId":{"type":"string"},"queueState":{"type":"string"},"crmReadback":{"type":"string"},"opportunityId":{"type":"string"},"externalActivityId":{"type":"string"},"opportunityMutation":{"type":"string"},"reconciliationStatus":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["runStatus","evaluated","createdIds","updatedIds","skippedIds","reasons"],"properties":{"reasons":{"type":"string"},"evaluated":{"type":"number"},"runStatus":{"type":"string"},"createdIds":{"type":"string"},"skippedIds":{"type":"string"},"updatedIds":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["direction","senderReadiness","classification","ballInCourt","shouldDraft","recipient","linkedinKind","needsDocuments","personId","companyId","opportunityId","interactionId","opportunityMutation","idempotencyKey","confidence","reason","crmReadback"],"properties":{"reason":{"type":"string"},"personId":{"type":"string"},"companyId":{"type":"string"},"direction":{"type":"string"},"recipient":{"type":"string"},"confidence":{"type":"string"},"ballInCourt":{"type":"string"},"crmReadback":{"type":"string"},"shouldDraft":{"type":"boolean"},"linkedinKind":{"type":"string"},"interactionId":{"type":"string"},"opportunityId":{"type":"string"},"classification":{"type":"string"},"idempotencyKey":{"type":"string"},"needsDocuments":{"type":"boolean"},"senderReadiness":{"type":"string"},"opportunityMutation":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["content","emailSubject","emailBody","sourceObjectType","sourceRecordId"],"properties":{"content":{"type":"string"},"emailBody":{"type":"string"},"emailSubject":{"type":"string"},"sourceRecordId":{"type":"string"},"sourceObjectType":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["content","emailSubject","emailBody","sourceObjectType","sourceRecordId"],"properties":{"content":{"type":"string"},"emailBody":{"type":"string"},"emailSubject":{"type":"string"},"sourceRecordId":{"type":"string"},"sourceObjectType":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["content","emailSubject","emailBody","sourceObjectType","sourceRecordId"],"properties":{"content":{"type":"string"},"emailBody":{"type":"string"},"emailSubject":{"type":"string"},"sourceRecordId":{"type":"string"},"sourceObjectType":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["content","emailSubject","emailBody","sourceObjectType","sourceRecordId"],"properties":{"content":{"type":"string"},"emailBody":{"type":"string"},"emailSubject":{"type":"string"},"sourceRecordId":{"type":"string"},"sourceObjectType":{"type":"string"}},"additionalProperties":false},{"type":"object","required":["runStatus","processed","changedIds","unchangedIds","blockedIds","reasons"],"properties":{"reasons":{"type":"string"},"processed":{"type":"number"},"runStatus":{"type":"string"},"blockedIds":{"type":"string"},"changedIds":{"type":"string"},"unchangedIds":{"type":"string"}},"additionalProperties":false}];
+ for(const schema of schemas){
+  const validate=compileResponseSchema(schema);
+  const valid=Object.fromEntries(Object.entries(schema.properties).map(([k,v])=>[k,v.type==='string'?'':v.type==='number'?0:false]));
+  assert.equal(validate(valid).success,true);
+  assert.equal(validate({analysis:'wrong',key_points:[],data_extracted:{}}).success,false);
+ }
+});
+await test('nested provider failures retain status and safe codes without response body contents',async()=>{
+ const {describeExecutionError}=require('./schema-validation.cjs');
+ const e=new Error('Provider returned error');
+ e.lastError={statusCode:429,responseBody:JSON.stringify({error:{code:429,type:'rate_limit_error',metadata:{provider_name:'Example',raw:'private payload'}}})};
+ const result=describeExecutionError(e);
+ assert(result.includes('HTTP 429'));assert(result.includes('code=429'));assert(!result.includes('private payload'));
+});
+await test('diagnostic traversal is bounded and accepts non-JSON error bodies',async()=>{
+ const {describeExecutionError}=require('./schema-validation.cjs');
+ const e=new Error('Upstream failed');e.cause=e;e.statusCode=503;e.responseBody='private unparseable body';
+ assert.equal(describeExecutionError(e),'Upstream failed [HTTP 503]');
 });
 
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));

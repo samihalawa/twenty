@@ -21,3 +21,4 @@ assert.equal(rewrite(nested)[0].condition.condition[0].condition,rewrite(eq));pa
 assert.equal(rewrite('id = :id'),'id = :id');assert.equal(rewrite(null),null);assert.equal(rewrite(3),3);passed++;
 const operator={operator:'equal',parameters:['opportunity.id']};assert.equal(rewrite(operator),operator);passed++;
 console.log('Qualified SQL alias regression tests: '+passed+' passed.');
+

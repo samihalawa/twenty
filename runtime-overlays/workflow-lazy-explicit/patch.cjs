@@ -20,9 +20,18 @@ const specs = [
     "path": "engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.js",
     "sha256": "25b462859a1a7ce9c250abcc3395bb140143db8bbc41940037f35736d2e442c1",
     "changes": [
-      ["const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);","const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);\n            const maxOutputTokens = this.aiModelRegistryService.getEffectiveModelConfig(registeredModel.modelId).maxOutputTokens;"],
-      ["model: registeredModel.model,\n                messages:","model: registeredModel.model,\n                maxOutputTokens,\n                messages:"],
-      ["model: registeredModel.model,\n                    prompt:","model: registeredModel.model,\n                    maxOutputTokens,\n                    prompt:"],
+      [
+        "const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);",
+        "const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);\n            const maxOutputTokens = this.aiModelRegistryService.getEffectiveModelConfig(registeredModel.modelId).maxOutputTokens;"
+      ],
+      [
+        "model: registeredModel.model,\n                messages:",
+        "model: registeredModel.model,\n                maxOutputTokens,\n                messages:"
+      ],
+      [
+        "model: registeredModel.model,\n                    prompt:",
+        "model: registeredModel.model,\n                    maxOutputTokens,\n                    prompt:"
+      ],
       [
         "async buildLazyRegistryTools({ agent, agentRoleId, runAsRoleId, authContext, actorContext })",
         "async buildLazyRegistryTools({ agent, agentRoleId, runAsRoleId, authContext, actorContext, requireExplicitObjectGrants = false })"
@@ -46,6 +55,38 @@ const specs = [
       [
         "const lazyToolset = await this.buildLazyRegistryTools({\n                            agent,",
         "const lazyToolset = await this.buildLazyRegistryTools({\n                            requireExplicitObjectGrants: toolLoadingStrategy === 'lazy-workflow-explicit',\n                            agent,"
+      ],
+      [
+        "const agentSchema = agent?.responseFormat?.type === 'json' ? agent.responseFormat.schema : undefined;",
+        ""
+      ],
+      [
+        "try {\n            if (agent) {",
+        "try {\n            const agentSchema = agent?.responseFormat?.type === 'json' ? agent.responseFormat.schema : undefined;\n            const validateResponse = agentSchema === undefined ? undefined : require('/opt/workflow-lazy-tools/schema-validation.cjs').compileResponseSchema(agentSchema);\n            if (agent) {"
+      ],
+      [
+        "if (agentSchema) {",
+        "if (validateResponse) {"
+      ],
+      [
+        "system: _structuredoutputsystempromptconst.STRUCTURED_OUTPUT_SYSTEM_PROMPT,",
+        "system: _structuredoutputsystempromptconst.STRUCTURED_OUTPUT_SYSTEM_PROMPT + '\\nReturn JSON conforming exactly to this JSON Schema. Use its field names, required fields, and types; do not invent a different response structure.\\n' + JSON.stringify(agentSchema),"
+      ],
+      [
+        "schema: (0, _ai.jsonSchema)(agentSchema)",
+        "schema: (0, _ai.jsonSchema)(agentSchema, { validate: validateResponse })"
+      ],
+      [
+        "providerOptions: undefined,\n                        promptCacheKey: agent?.id",
+        "providerOptions: this.aiModelConfigService.getReasoningProviderOptions(registeredModel),\n                        promptCacheKey: agent?.id"
+      ],
+      [
+        "result = structuredResult.output;",
+        "const checkedResponse = validateResponse(structuredResult.output);\n                if (!checkedResponse.success) throw checkedResponse.error;\n                result = checkedResponse.value;"
+      ],
+      [
+        "error instanceof Error ? error.message : 'Agent execution failed'",
+        "require('/opt/workflow-lazy-tools/schema-validation.cjs').describeExecutionError(error)"
       ]
     ]
   },
@@ -73,16 +114,26 @@ const specs = [
       ]
     ]
   },
-{
-  "path": "engine/metadata-modules/ai/ai-models/services/ai-model-config.service.js",
-  "sha256": "2df3355b645603acff30f4735c52ddac8651cdd7281efecf695f9a1568719fa0",
-  "changes": [
-    [
-      "getReasoningProviderOptions(model) {",
-      "getReasoningProviderOptions(model) {\n        // Groq GPT-OSS rejects reasoning_content in subsequent tool rounds.\n        // The compatible SDK otherwise serializes returned reasoning into that field.\n        if (model.sdkPackage === '@ai-sdk/openai-compatible' &&\n            model.modelsDevName === 'groq' &&\n            model.model?.provider === 'groq.chat' &&\n            /^openai\\/gpt-oss-(20b|120b)$/.test(model.model?.modelId ?? '')) {\n            return { groq: { include_reasoning: false } };\n        }"
+  {
+    "path": "engine/metadata-modules/ai/ai-models/services/ai-model-config.service.js",
+    "sha256": "2df3355b645603acff30f4735c52ddac8651cdd7281efecf695f9a1568719fa0",
+    "changes": [
+      [
+        "getReasoningProviderOptions(model) {",
+        "getReasoningProviderOptions(model) {\n        // Groq GPT-OSS rejects reasoning_content in subsequent tool rounds.\n        // The compatible SDK otherwise serializes returned reasoning into that field.\n        if (model.sdkPackage === '@ai-sdk/openai-compatible' &&\n            model.modelsDevName === 'groq' &&\n            model.model?.provider === 'groq.chat' &&\n            /^openai\\/gpt-oss-(20b|120b)$/.test(model.model?.modelId ?? '')) {\n            return { groq: { include_reasoning: false } };\n        }"
+      ]
     ]
-  ]
-}
+  },
+  {
+    "path": "engine/core-modules/tool/utils/json-preview.util.js",
+    "sha256": "2ea4ac20d07c238e7693ad0deed543d26746d022bcfb63ce0d3b48a7da5ab1f9",
+    "changes": [
+      [
+        "const buildPreview = (value, maxDepth, depth)=>{",
+        "const buildPreview = (value, maxDepth, depth)=>{\n    // Match JSON serialization for both valid and invalid Date instances.\n    if ((0, _guards.isDate)(value)) {\n        return value.toJSON();\n    }"
+      ]
+    ]
+  }
 ];
 
 function preparePatches() {
