@@ -56,7 +56,7 @@ const overrides={
 };
 const Executor=moduleClass(PATCHES[1].patched,'AgentAsyncExecutorService',overrides);
 const executor=new Executor(
- {resolveModelForAgent:async()=>({modelId:'model',model:{},sdkPackage:'mock'}),validateModelAvailability(){}},
+ {resolveModelForAgent:async()=>({modelId:'model',model:{},sdkPackage:'mock'}),validateModelAvailability(){},getEffectiveModelConfig:()=>({maxOutputTokens:4096})},
  {getReasoningProviderOptions:()=>({})},registry,{bind:()=>({})},
  {calculateCost:()=>0,emitAiTokenUsageEvent:async()=>{},billNativeWebSearchUsage:async()=>{},decrementAndCheckAvailableCredits:async()=>({hasNoMoreAvailableCredits:false})},
  {hasAvailableCreditsOrThrow:async()=>{}},{},{findOne:async()=>({roleId:'role'})},{findOneBy:async()=>null}
@@ -96,6 +96,7 @@ await test('workflow lazy returns existing text result contract',async()=>{
  assert.deepEqual(Object.keys(calls[0].tools),['learn_tools','execute_tool']);
  assert(!calls[0].system.includes('delete_ungranted'));
  assert.equal(calls.length,1);
+ assert.equal(calls[0].maxOutputTokens,4096);
 });
 await test('workflow lazy retains second structured-output call',async()=>{
  calls.length=0;
@@ -103,6 +104,8 @@ await test('workflow lazy retains second structured-output call',async()=>{
  assert.equal(out.result.id,'op-1');
  assert.equal(calls.length,2);
  assert(calls[1].output);
+ assert.equal(calls[0].maxOutputTokens,4096);
+ assert.equal(calls[1].maxOutputTokens,4096);
 });
 await test('preload default remains unchanged for other callers',async()=>{
  calls.length=0;await executor.executeAgent(execArgs);

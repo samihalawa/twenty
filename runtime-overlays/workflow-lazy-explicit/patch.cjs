@@ -20,6 +20,9 @@ const specs = [
     "path": "engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.js",
     "sha256": "25b462859a1a7ce9c250abcc3395bb140143db8bbc41940037f35736d2e442c1",
     "changes": [
+      ["const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);","const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);\n            const maxOutputTokens = this.aiModelRegistryService.getEffectiveModelConfig(registeredModel.modelId).maxOutputTokens;"],
+      ["model: registeredModel.model,\n                messages:","model: registeredModel.model,\n                maxOutputTokens,\n                messages:"],
+      ["model: registeredModel.model,\n                    prompt:","model: registeredModel.model,\n                    maxOutputTokens,\n                    prompt:"],
       [
         "async buildLazyRegistryTools({ agent, agentRoleId, runAsRoleId, authContext, actorContext })",
         "async buildLazyRegistryTools({ agent, agentRoleId, runAsRoleId, authContext, actorContext, requireExplicitObjectGrants = false })"

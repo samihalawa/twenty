@@ -8,6 +8,8 @@ The overlay also repairs qualified table-alias rewriting in conditional mutation
 
 The Dockerfile pins the upstream image digest. Before modifying five compiled modules, the build checks their SHA-256 hashes, validates the proposed JavaScript and runs eight tool-loading regression tests, ten alias-rewriting regression tests and six provider-option regression tests. A changed upstream source stops the build for review.
 
+Both agent generation calls use the resolved model's configured output-token limit, including the final structured-result call. This keeps the executable request aligned with the registered configuration; it does not remove input-token, rate or account limits.
+
 For Groq GPT-OSS 20B and 120B through the OpenAI-compatible SDK, the overlay sets `include_reasoning: false` under the SDK's `groq` provider-options namespace. This prevents the SDK from carrying returned reasoning into a subsequent tool request as `reasoning_content`, a field Groq rejects. Other model families, providers and existing Anthropic/Bedrock reasoning options are unchanged. The registered provider key may differ from the SDK namespace.
 
 The tests use isolated dependencies and do not prove live provider availability, production permissions, successful CRM writes or end-to-end workflow completion. Deployments still require those checks, including a native conditional update that changes one matching row and a stale-timestamp retry that changes none. This patch does not add credits, alter provider accounts or automatically resume paused workflows.
