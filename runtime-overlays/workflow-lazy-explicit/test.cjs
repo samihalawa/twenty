@@ -379,6 +379,38 @@ await test('installed compatible SDK forwards the paid provider allowlist into t
  assert.equal(JSON.stringify(req.args.provider.only),JSON.stringify(['CoreWeave','DeepInfra']));assert.equal(req.args.provider.require_parameters,true);
  assert(!req.args.provider.only.includes('Darkbloom'));
 });
+
+await test('AI log sanitizer preserves nested Dates and still removes noisy keys',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('map-ai-steps-to-tool-call-logs.util.js'));
+ const map=moduleClass(p.patched,'mapAiStepsToToolCallLogs',{'../../../../../utils/truncate-string-to-utf8-byte-budget.util':{truncateStringToUtf8ByteBudget:value=>({value,truncated:false})}});
+ const stamp=new Date('2026-09-05T01:02:03.000Z');
+ const out=map([{content:[{type:'tool-call',toolName:'read',toolCallId:'1',input:{}},{type:'tool-result',toolCallId:'1',output:{result:{records:[{lastReconciledAt:stamp,searchVector:'noise',nested:{receivedAt:stamp},empty:{}}]}}}]}]);
+ const row=out[0].output.result.records[0];
+ assert(row.lastReconciledAt instanceof Date);assert.equal(row.lastReconciledAt.toISOString(),stamp.toISOString());
+ assert.equal(JSON.parse(JSON.stringify(row)).lastReconciledAt,stamp.toISOString());assert.equal(row.searchVector,undefined);assert.equal(Object.keys(row.empty).length,0);assert.equal(row.nested.receivedAt.toISOString(),stamp.toISOString());
+});
+function runHookFixture(){
+ const p=PATCHES.find(x=>x.path.includes('useFindOneRecord-'));const body='const J='+p.patched.split(',J=')[1].split(';export')[0]+';J';
+ let opts=null,data=null;const ref={current:null};
+ const hook=vm.runInNewContext(body,{m:{useRef:()=>ref,useMemo:fn=>fn()},i:()=>({objectMetadataItem:{id:'object'}}),v:()=>({recordGqlFields:{}}),q:()=>({}),L:()=>({findOneRecordQuery:'query'}),G:()=>({canReadObjectRecords:true}),M:x=>x!=null,y:(q,o)=>{opts=o;return{data,loading:false,refetch:()=>{}};},h:({recordNode})=>recordNode});
+ return {render:(objectNameSingular,status,extra={})=>{data=status?{[objectNameSingular]:{id:'run',status}}:null;hook({objectNameSingular,objectRecordId:'run',...extra});return opts;}};
+}
+await test('run panel uses current network data and bounded refresh only for workflow runs',async()=>{
+ const f=runHookFixture(),o=f.render('workflowRun','RUNNING');assert.equal(o.fetchPolicy,'cache-and-network');assert.equal(o.pollInterval,3000);assert.equal(o.skipPollAttempt(),false);
+});
+await test('all native terminal statuses stop workflow refresh',async()=>{
+ const f=runHookFixture();for(const state of ['COMPLETED','FAILED','STOPPED'])assert.equal(f.render('workflowRun',state).skipPollAttempt(),true);
+});
+await test('queued starting and stopping runs keep refreshing',async()=>{
+ const f=runHookFixture();for(const state of ['NOT_STARTED','ENQUEUED','RUNNING','STOPPING'])assert.equal(f.render('workflowRun',state).skipPollAttempt(),false);
+});
+await test('other objects retain previous query behavior',async()=>{
+ const f=runHookFixture(),o=f.render('opportunity','NEW');assert.equal(o.fetchPolicy,undefined);assert.equal(o.pollInterval,undefined);assert.equal(o.skipPollAttempt,undefined);
+});
+await test('missing IDs and explicit skips preserve native skip behavior',async()=>{
+ const f=runHookFixture();assert.equal(f.render('workflowRun',null,{objectRecordId:''}).skip,true);assert.equal(f.render('workflowRun','RUNNING',{skip:true}).skip,true);
+});
+
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
 
 })().catch(error=>{console.error(error);process.exitCode=1;});

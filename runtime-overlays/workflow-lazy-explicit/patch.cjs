@@ -166,6 +166,31 @@ const specs = [
       "name: config.name ?? 'openai-compatible',\n            baseURL: config.baseUrl,\n            // OpenRouter supports schema-constrained response_format; other compatible providers keep their existing default.\n            supportsStructuredOutputs: /^https:\\/\\/openrouter\\.ai\\/api\\/v1\\/?$/.test(config.baseUrl),"
     ]
   ]
+},
+{
+  "path": "engine/metadata-modules/ai/ai-agent-execution/utils/map-ai-steps-to-tool-call-logs.util.js",
+  "sha256": "8427c2d5e647e3bb2adbd96b5296743178ba8d3e7da5dc6b55366cad4dff3dfd",
+  "changes": [
+    [
+      "const stripNoisyKeysDeep = (value)=>{",
+      "const stripNoisyKeysDeep = (value)=>{\n    if (value instanceof Date) return value;"
+    ]
+  ]
+},
+{
+  "path": "front/assets/useFindOneRecord-Cg_N4T_t.js",
+  "sha256": "ceb4b9360e1292817da8f015a198d2175ac4656770db5f76b9fef5d30dc7ee95",
+  "format": "esm",
+  "changes": [
+    [
+      "})=>{const{objectMetadataItem:o}=i({objectNameSingular:e}),",
+      "})=>{const runStatusRef=(0,m.useRef)(null);const{objectMetadataItem:o}=i({objectNameSingular:e}),"
+    ],
+    [
+      "variables:{objectRecordId:r},client:n});return{record:",
+      "variables:{objectRecordId:r},client:n,...(e===\"workflowRun\"?{fetchPolicy:\"cache-and-network\",pollInterval:3000,skipPollAttempt:()=>[\"COMPLETED\",\"FAILED\",\"STOPPED\"].includes(runStatusRef.current)}:{})});runStatusRef.current=d?.[e]?.status??null;return{record:"
+    ]
+  ]
 }
 ];
 
@@ -182,7 +207,7 @@ function preparePatches() {
       if (patched.split(before).length !== 2) throw new Error('Patch anchor mismatch: ' + spec.path);
       patched = patched.replace(before, after);
     }
-    new vm.Script(patched, { filename: spec.path });
+    new vm.Script(spec.format === 'esm' ? patched.replace(/import[^;]+;/g, '').replace(/export\{[^;]+;/g, '') : patched, { filename: spec.path });
     return { path: spec.path, absolutePath, source, patched };
   });
 }
