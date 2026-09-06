@@ -4,10 +4,10 @@ const PATCHES=require('./patch.cjs').preparePatches();
 
 const vm=require('node:vm'),assert=require('node:assert/strict');
 const fallback=new Proxy({}, {get:()=>function(){return ()=>undefined}});
-const decorators={Injectable:()=>()=>{},Inject:()=>()=>{},Logger:class{log(){} warn(){} error(){}}};
+const decorators={UseGuards:()=>()=>{},UsePipes:()=>()=>{},UseFilters:()=>()=>{},Injectable:()=>()=>{},Inject:()=>()=>{},Logger:class{log(){} warn(){} error(){}}};
 function moduleClass(source,name,overrides={}){
  const exports={};
- vm.runInNewContext(source,{exports,require:(key)=>key==='@nestjs/common'?decorators:overrides[key]??fallback,Set,Map,Date,String,Object,Math,Error,Buffer},{timeout:2000});
+ vm.runInNewContext(source,{exports,require:(key)=>key==='@nestjs/common'?decorators:key==='zod'?require('node:module').createRequire('/app/packages/twenty-server/package.json')('zod'):overrides[key]??fallback,Set,Map,Date,String,Object,Math,Error,Buffer},{timeout:2000});
  return exports[name];
 }
 const Registry=moduleClass(PATCHES[2].patched,'ToolRegistryService',{
@@ -78,6 +78,53 @@ await test('workflow lazy preserves explicit grants in catalog, schemas and exec
  assert.equal(dispatches.at(-1).c.rolePermissionConfig.agent,'role');
  assert(contextSeen.every(x=>x.c.requireExplicitObjectGrants===true));
  await assert.rejects(lazy.tools.execute_tool.execute({toolName:'delete_ungranted',args:{}}));
+});
+await test('explicit workflow logic functions require admin configuration and bounded read-only allowlist',async()=>{
+ const prior=registry.buildToolIndex;
+ registry.buildToolIndex=async()=>[
+  {name:'get_opportunity',category:'record'},
+  {name:'app_crm_runtime_clock',category:'logic_function'},
+  {name:'app_linkedin_conversations',category:'logic_function'},
+  {name:'app_arbitrary_writer',category:'logic_function'},
+  {name:'run_agent',category:'ai'},
+  {name:'get_tool_output',category:'record'}
+ ];
+ try {
+  const requested={...agent,modelConfiguration:{workflowReadOnlyToolNames:['app_crm_runtime_clock','app_linkedin_conversations','app_arbitrary_writer','run_agent','get_tool_output']}};
+  const scoped=await executor.buildLazyRegistryTools({...base,agent:requested,requireExplicitObjectGrants:true});
+  assert(scoped.catalogSection.includes('app_crm_runtime_clock'));
+  assert(scoped.catalogSection.includes('app_linkedin_conversations'));
+  for(const denied of ['app_arbitrary_writer','run_agent','get_tool_output']){
+   assert(!scoped.catalogSection.includes(denied));
+   await assert.rejects(scoped.tools.execute_tool.execute({toolName:denied,args:{}}));
+  }
+  for(const opts of [{...base,requireExplicitObjectGrants:true},{...base,agent:requested}]){
+   const out=await executor.buildLazyRegistryTools(opts);
+   assert(!out.catalogSection.includes('app_crm_runtime_clock'));
+  }
+ } finally {registry.buildToolIndex=prior;}
+});
+await test('workflow oversized output is an explicit bounded failure with mutation ambiguity preserved',async()=>{
+ const prior=registry.resolveAndExecute;
+ registry.resolveAndExecute=async()=>({success:true,result:'x'.repeat(60000)});
+ try {
+  const scoped=await executor.buildLazyRegistryTools({...base,requireExplicitObjectGrants:true});
+  const out=await scoped.tools.execute_tool.execute({toolName:'get_opportunity',args:{}});
+  assert.equal(out.success,false);assert.equal(out.errorCode,'WORKFLOW_TOOL_OUTPUT_TOO_LARGE');
+  assert.equal(out.operationMayHaveApplied,true);assert(JSON.stringify(out).length<1000);
+  assert(out.error.includes('not an empty result'));assert(out.error.includes('read back'));
+  const ordinary=await executor.buildLazyRegistryTools(base);
+  assert.equal((await ordinary.tools.execute_tool.execute({toolName:'get_opportunity',args:{}})).result.length,60000);
+ } finally {registry.resolveAndExecute=prior;}
+});
+await test('workflow bounded result preserves exact content and dates',async()=>{
+ const prior=registry.resolveAndExecute;
+ const result={success:true,result:{receivedAt:'2026-09-04T01:02:03Z',body:'Complete message'}};
+ registry.resolveAndExecute=async()=>result;
+ try {
+  const scoped=await executor.buildLazyRegistryTools({...base,requireExplicitObjectGrants:true});
+  assert.equal(await scoped.tools.execute_tool.execute({toolName:'get_opportunity',args:{}}),result);
+ } finally {registry.resolveAndExecute=prior;}
 });
 await test('ordinary lazy retains existing broad-role behavior',async()=>{
  const lazy=await executor.buildLazyRegistryTools(base);
@@ -462,6 +509,127 @@ await test('native parse recovery accepts only bounded schema-valid text and pre
  assert.throws(()=>recoverStructuredParse(error,undefined,true),x=>x===error);
 });
 
+await test('metadata execution uses authenticated user identity and ignores actor values in payload',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('logic-function.resolver.js'));
+ let got;
+ const Resolver=moduleClass(p.patched,'LogicFunctionResolver');
+ const resolver=new Resolver({executeOneFromSource:async args=>{got=args;return {status:'SUCCESS'};}});
+ const payload={userId:'spoof',userWorkspaceId:'spoof',workspaceMemberId:'spoof'};
+ await resolver.executeOneLogicFunction({id:'function',payload},{id:'workspace'},{id:'verified-user'},'verified-membership');
+ assert.equal(got.userId,'verified-user');assert.equal(got.userWorkspaceId,'verified-membership');assert.equal(got.payload,payload);
+ await resolver.executeOneLogicFunction({id:'function',payload},{id:'workspace'});
+ assert.equal(got.userId,undefined);assert.equal(got.userWorkspaceId,undefined);
+});
+await test('source-aware executor preserves verified identity and never takes identity from payload',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('logic-function-from-source.service.js'));
+ let got;
+ const Service=moduleClass(p.patched,'LogicFunctionFromSourceService',{
+ '../logic-function.entity':{LogicFunctionExecutionMode:{LIVE:'LIVE'}}
+ });
+ const source=new Service({execute:async args=>{got=args;return {status:'SUCCESS'};}},{},{},{findLogicFunctionAndApplicationOrThrow:async()=>({flatLogicFunction:{isBuildUpToDate:true}})});
+ const payload={userId:'spoof'};
+ await source.executeOneFromSource({id:'function',workspaceId:'workspace',payload,userId:'verified-user',userWorkspaceId:'verified-membership'});
+ assert.equal(got.userId,'verified-user');assert.equal(got.userWorkspaceId,'verified-membership');assert.equal(got.executionMode,'LIVE');
+ await source.executeOneFromSource({id:'function',workspaceId:'workspace',payload});
+ assert.equal(got.userId,undefined);assert.equal(got.userWorkspaceId,undefined);
+});
+await test('Gmail draft returns exact native IDs and independently fetched MIME with attachment hashes',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('gmail-message-outbound.service.js'));
+ const Gmail=moduleClass(p.patched,'GmailMessageOutboundService',{'@sniptt/guards':{isNonEmptyString:x=>typeof x==='string'&&x.length>0},'node:crypto':require('node:crypto')});
+ const service=new Gmail();let creates=0,gets=0,attachments=0;
+ const nativeMessage={id:'m1',threadId:'t1',payload:{headers:[{name:'Subject',value:'Native subject'}],parts:[{filename:'CV.pdf',mimeType:'application/pdf',body:{attachmentId:'a1'}}]}};
+ const client={users:{drafts:{create:async()=>{creates++;return {data:{id:'d1',message:{id:'m1',threadId:'t1'}}};},get:async args=>{gets++;assert.equal(args.id,'d1');assert.equal(args.format,'full');return {data:{id:'d1',message:nativeMessage}};}},messages:{attachments:{get:async args=>{attachments++;assert.equal(args.messageId,'m1');assert.equal(args.id,'a1');return {data:{data:Buffer.from('exact bytes').toString('base64url')}};}}}}};
+ service.composeGmailMessage=async()=>({gmailClient:client,encodedMessage:'encoded'});
+ const out=await service.createDraft({},{});
+ assert.equal(creates,1);assert.equal(gets,1);assert.equal(attachments,1);assert.equal(out.readBackConfirmed,true);assert.equal(out.nativeMessage,nativeMessage);
+ assert.equal(out.attachmentManifest[0].sha256,require('node:crypto').createHash('sha256').update('exact bytes').digest('hex'));
+ assert.equal(out.attachmentManifest[0].size,11);
+});
+await test('Gmail read-back failure preserves created draft ID and never repeats creation',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('gmail-message-outbound.service.js'));
+ const Gmail=moduleClass(p.patched,'GmailMessageOutboundService',{'@sniptt/guards':{isNonEmptyString:()=>false}});
+ for(const get of [async()=>{throw Error('provider timeout');},async()=>({data:{id:'wrong',message:{id:'m1'}}})]){
+  let count=0;const service=new Gmail();
+  service.composeGmailMessage=async()=>({encodedMessage:'encoded',gmailClient:{users:{drafts:{create:async()=>{count++;return {data:{id:'d1',message:{id:'m1'}}};},get}}}});
+  const out=await service.createDraft({},{});assert.equal(count,1);assert.equal(out.draftId,'d1');assert.equal(out.messageId,'m1');assert.equal(out.readBackConfirmed,false);assert(out.error);
+ }
+});
+await test('draft email tool exposes provider evidence separately from input echoes',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('/draft-email-tool.js'));
+ const Draft=moduleClass(p.patched,'DraftEmailTool',{'./email-tool.schema':{EmailToolInputZodSchema:{extend:()=>({})}},'./utils/get-missing-draft-email-scopes.util':{getMissingDraftEmailScopes:()=>[]}});
+ const nativeDraft={draftId:'d1',messageId:'m1',readBackConfirmed:true};
+ const data={connectedAccount:{id:'account'},recipients:{to:['to@example.com'],cc:[],bcc:[]},attachments:[],sanitizedSubject:'subject',sanitizedHtmlBody:'body',plainTextBody:'body'};
+ const tool=new Draft({composeEmail:async()=>({success:true,data})},{createDraft:async()=>nativeDraft});
+ const out=await tool.execute({},{});assert.equal(out.success,true);assert.equal(out.result.nativeDraft,nativeDraft);assert.equal(out.result.attachmentCount,0);
+});
+function draftFixture(){
+ const p=PATCHES.find(x=>x.path.endsWith('gmail-message-outbound.service.js'));
+ const calls=[];let edited=false,missing=false;
+ const message={id:'m1',threadId:'t1',payload:{headers:[],body:{data:''}}};
+ const parsed={from:{address:'me@example.com'},to:[{address:'to@example.com'}],cc:[],bcc:[],subject:'subject',text:'body',html:'<p>body</p>',messageId:'<message>',attachments:[]};
+ const client={users:{drafts:{
+ get:async args=>{calls.push(['get',args]);if(missing)throw Error('404');return {data:{id:args.id,message:args.format==='raw'?{...message,raw:Buffer.from('raw').toString('base64url')}:message}};},
+ create:async args=>{calls.push(['create',args]);throw Error('CREATE must not run');},
+ update:async args=>{calls.push(['update',args]);return {data:{id:args.id,message}};},
+ send:async args=>{calls.push(['send',args]);return {data:{id:'sent-id',threadId:'t1'}};}
+ }}};
+ const Gmail=moduleClass(p.patched,'GmailMessageOutboundService',{'googleapis':{google:{gmail:()=>client}},'@sniptt/guards':{isNonEmptyString:x=>!!x},'postal-mime':{parse:async()=>({...parsed,subject:edited?'edited':parsed.subject})},'node:crypto':require('node:crypto')});
+ const service=new Gmail();service.googleOAuth2ClientProvider={getClient:async()=>({})};service.composeGmailMessage=async()=>({gmailClient:client,encodedMessage:'reviewed'});
+ const input={providerDraftId:'d1',to:['to@example.com'],cc:[],bcc:[],subject:'subject',body:'body',html:'<p>body</p>',threadExternalId:'t1',attachments:[]};
+ return {service,calls,input,account:{id:'account',handle:'me@example.com'},edit:()=>{edited=true;},missing:()=>{missing=true;}};
+}
+await test('READ performs no provider writes and returns exact provider evidence',async()=>{
+ const f=draftFixture();const out=await f.service.createDraft({draftOperation:'READ',draftId:'d1'},f.account);
+ assert.equal(out.readBackConfirmed,true);assert.equal(out.draftId,'d1');assert.deepEqual(f.calls.map(x=>x[0]),['get']);
+});
+await test('UPSERT updates exact draft ID and performs no create',async()=>{
+ const f=draftFixture();const out=await f.service.createDraft({draftOperation:'UPSERT',draftId:'d1'},f.account);
+ assert.equal(out.readBackConfirmed,true);assert.equal(out.draftId,'d1');assert.deepEqual(f.calls.map(x=>x[0]),['get','update','get']);
+ assert.equal(f.calls[1][1].id,'d1');assert.equal(f.calls[1][1].requestBody.id,'d1');
+});
+await test('unknown draft cannot fall back to create or new send',async()=>{
+ for(const operation of ['READ','UPSERT','SEND']){
+  const f=draftFixture();f.missing();
+  if(operation==='READ'){const out=await f.service.createDraft({draftOperation:operation,draftId:'missing'},f.account);assert.equal(out.readBackConfirmed,false);}
+  else if(operation==='UPSERT') await assert.rejects(f.service.createDraft({draftOperation:operation,draftId:'missing'},f.account),/404/);
+  else await assert.rejects(f.service.sendMessage(f.input,f.account),/404/);
+  assert.deepEqual(f.calls.map(x=>x[0]),['get']);
+ }
+});
+await test('exact reviewed draft is consumed once and preserves native sent receipt',async()=>{
+ const f=draftFixture();const out=await f.service.sendMessage(f.input,f.account);
+ assert.deepEqual(f.calls.map(x=>x[0]),['get','send']);assert.equal(f.calls[1][1].requestBody.id,'d1');
+ assert.equal(out.messageExternalId,'sent-id');assert.equal(out.threadExternalId,'t1');assert.equal(out.headerMessageId,'<message>');
+});
+await test('provider edit after approval blocks exact draft send before mutation',async()=>{
+ const f=draftFixture();f.edit();await assert.rejects(f.service.sendMessage(f.input,f.account),/differs from the reviewed/);
+ assert.deepEqual(f.calls.map(x=>x[0]),['get']);
+});
+await test('draft-only native action input extension preserves send schema separation',async()=>{
+ const patch=PATCHES.find(x=>x.path.endsWith('workflow.cjs'));
+ const nativeRequire=require('node:module').createRequire('/app/packages/twenty-shared/dist/workflow.cjs');
+ const exports={};vm.runInNewContext(patch.patched,{exports,require:nativeRequire,Symbol,Set,Map,Object,Array,RegExp,String,Number,JSON},{timeout:3000});
+ const draft=exports.workflowDraftEmailActionSchema.shape.settings.shape.input;
+ const send=exports.workflowSendEmailActionSchema.shape.settings.shape.input;
+ const input={connectedAccountId:'account',recipients:{to:'to@example.com'},draftId:'d1',draftOperation:'READ',providerDraftId:'d1'};
+ const d=draft.parse(input),e=send.parse(input);
+ assert.equal(d.draftId,'d1');assert.equal(d.draftOperation,'READ');assert.equal(d.providerDraftId,undefined);
+ assert.equal(e.providerDraftId,'d1');assert.equal(e.draftId,undefined);assert.equal(e.draftOperation,undefined);
+});
+await test('installed MIME parser verifies actual compiled Unicode draft and rejects changed attachment bytes',async()=>{
+ const runtimeRequire=require('node:module').createRequire('/app/packages/twenty-server/package.json');
+ const MailComposer=runtimeRequire('nodemailer/lib/mail-composer');
+ const p=PATCHES.find(x=>x.path.endsWith('gmail-message-outbound.service.js'));
+ const input={providerDraftId:'d1',to:['to@example.com'],cc:[],bcc:[],subject:'Revisión exacta',body:'Texto íntegro',html:'<p>Texto íntegro</p>',attachments:[{filename:'CV.pdf',contentType:'application/pdf',content:Buffer.from('original PDF bytes')}]};
+ const raw=await new MailComposer({from:'me@example.com',to:input.to,subject:input.subject,text:input.body,html:input.html,attachments:input.attachments}).compile().build();
+ let sends=0;
+ const client={users:{drafts:{get:async()=>({data:{id:'d1',message:{id:'m1',raw:raw.toString('base64url')}}}),send:async()=>{sends++;return {data:{id:'sent'}};}}}};
+ const Gmail=moduleClass(p.patched,'GmailMessageOutboundService',{'googleapis':{google:{gmail:()=>client}},'postal-mime':runtimeRequire('postal-mime'),'node:crypto':require('node:crypto')});
+ const service=new Gmail();service.googleOAuth2ClientProvider={getClient:async()=>({})};
+ const out=await service.sendMessage(input,{id:'account',handle:'me@example.com'});assert.equal(sends,1);assert.equal(out.messageExternalId,'sent');
+ await assert.rejects(service.sendMessage({...input,attachments:[{...input.attachments[0],content:Buffer.from('changed PDF bytes')}]},{id:'account',handle:'me@example.com'}),/differs from the reviewed/);
+ assert.equal(sends,1);
+});
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
 
 })().catch(error=>{console.error(error);process.exitCode=1;});

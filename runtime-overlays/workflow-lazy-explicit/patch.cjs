@@ -257,6 +257,209 @@ const specs = [
 }
 ];
 
+// Additional repairs for explicit native workflow tools; ordinary lazy callers stay unchanged.
+specs[1].changes.push(...[
+  [
+    "const catalog = fullCatalog.filter((entry)=>allowedCategories.has(entry.category) && !excludedToolNames.has(entry.name));",
+    "const configuredReadTools = new Set(Array.isArray(agent.modelConfiguration?.workflowReadOnlyToolNames) ? agent.modelConfiguration.workflowReadOnlyToolNames : []);\n        const safeReadTools = new Set(['app_linkedin_conversations', 'app_crm_runtime_clock']);\n        const catalog = fullCatalog.filter((entry)=>(allowedCategories.has(entry.category) || (requireExplicitObjectGrants && configuredReadTools.has(entry.name) && safeReadTools.has(entry.name))) && !excludedToolNames.has(entry.name));"
+  ],
+  [
+    "spillLargeOutput: true\n            }),",
+    "spillLargeOutput: !requireExplicitObjectGrants\n            }),"
+  ],
+  [
+    "compactOutput: true,\n                spillLargeOutput: true",
+    "compactOutput: true,\n                spillLargeOutput: !requireExplicitObjectGrants"
+  ],
+  [
+    "        return {\n            tools,\n            catalogSection:",
+    "        // Workflow agents cannot navigate stored output blobs. Give an explicit,\n        // bounded failure instead of an incomplete preview that looks like evidence.\n        if (requireExplicitObjectGrants) {\n            for (const [name, tool] of Object.entries(tools)) {\n                const execute = tool.execute;\n                tool.execute = async (...args) => {\n                    const output = await execute(...args);\n                    const serialized = JSON.stringify(output);\n                    if (serialized !== undefined && Buffer.byteLength(serialized, 'utf8') > 49152) {\n                        return {\n                            success: false,\n                            errorCode: 'WORKFLOW_TOOL_OUTPUT_TOO_LARGE',\n                            operationMayHaveApplied: name === _tools.EXECUTE_TOOL_TOOL_NAME,\n                            error: 'The tool completed but its full output exceeds 49152 bytes. This is not an empty result and no partial evidence is supplied. For reads, select fewer fields and paginate with a smaller limit; read an exact record separately. For learn_tools, request one tool and one aspect at a time. A mutation may already have applied: independently read back the exact record before considering any retry.'\n                        };\n                    }\n                    return output;\n                };\n            }\n        }\n        return {\n            tools,\n            catalogSection:"
+  ]
+]);
+
+// Preserve server-authenticated user identity through the existing application-token contract.
+specs.push(...[
+  {
+    "path": "engine/metadata-modules/logic-function/logic-function.resolver.js",
+    "sha256": "0836020c11dabf37d249fe1bd30288f900824514a51271cb72fd9005f14dda7e",
+    "changes": [
+      [
+        "async executeOneLogicFunction({ id, payload }, { id: workspaceId }) {",
+        "async executeOneLogicFunction({ id, payload }, { id: workspaceId }, user, userWorkspaceId) {"
+      ],
+      [
+        "                id,\n                payload,\n                workspaceId\n            });",
+        "                id,\n                payload,\n                workspaceId,\n                userId: user?.id,\n                userWorkspaceId: user?.id ? userWorkspaceId : undefined\n            });"
+      ],
+      [
+        "    (0, _graphql.Mutation)(()=>_logicfunctionexecutionresultdto.LogicFunctionExecutionResultDTO),",
+        "    _ts_param(2, require('../../decorators/auth/auth-user.decorator').AuthUser({allowUndefined: true})),\n    _ts_param(3, require('../../decorators/auth/auth-user-workspace-id.decorator').AuthUserWorkspaceId({allowUndefined: true})),\n    (0, _graphql.Mutation)(()=>_logicfunctionexecutionresultdto.LogicFunctionExecutionResultDTO),"
+      ]
+    ]
+  },
+  {
+    "path": "engine/metadata-modules/logic-function/services/logic-function-from-source.service.js",
+    "sha256": "16f3e824f85211dd0b0f02419d87ef05a8ed528e6c7c51e9c0c27f2205f1a817",
+    "changes": [
+      [
+        "async executeOneFromSource({ id, payload, workspaceId }) {",
+        "async executeOneFromSource({ id, payload, workspaceId, userId, userWorkspaceId }) {"
+      ],
+      [
+        "            payload,\n            executionMode: _logicfunctionentity.LogicFunctionExecutionMode.LIVE",
+        "            payload,\n            userId,\n            userWorkspaceId,\n            executionMode: _logicfunctionentity.LogicFunctionExecutionMode.LIVE"
+      ]
+    ]
+  }
+]);
+
+// Preserve native provider receipts; Gmail evidence is independently retrieved by exact ID.
+specs.push(...[
+  {
+    "path": "engine/core-modules/tool/tools/email-tool/draft-email-tool.js",
+    "sha256": "fd35326a6a15ea692595c772164e97b79dc577fcf3da5e5ac5f5b4fe500d1874",
+    "changes": [
+      [
+        "            await this.createDraft(data);",
+        "            const nativeDraft = await this.createDraft(data);"
+      ],
+      [
+        "                    attachmentCount: data.attachments.length",
+        "                    attachmentCount: data.attachments.length,\n                    nativeDraft: nativeDraft ?? {readBackConfirmed: false, error: 'Provider returned no native draft receipt'}"
+      ],
+      [
+        "        await this.messageOutboundService.createDraft({",
+        "        return this.messageOutboundService.createDraft({"
+      ]
+    ]
+  },
+  {
+    "path": "modules/messaging/message-outbound-manager/drivers/gmail/services/gmail-message-outbound.service.js",
+    "sha256": "86d19a31ae4a12fdffc7c43966a421123a4265547580cc061637b27e85e43c9b",
+    "changes": [
+      [
+        "        await gmailClient.users.drafts.create({\n            userId: 'me',\n            requestBody: {\n                message: {\n                    raw: encodedMessage,\n                    ...(0, _guards.isNonEmptyString)(sendMessageInput.threadExternalId) ? {\n                        threadId: sendMessageInput.threadExternalId\n                    } : {}\n                }\n            }\n        });",
+        "        const created = await gmailClient.users.drafts.create({\n            userId: 'me',\n            requestBody: {\n                message: {\n                    raw: encodedMessage,\n                    ...(0, _guards.isNonEmptyString)(sendMessageInput.threadExternalId) ? {\n                        threadId: sendMessageInput.threadExternalId\n                    } : {}\n                }\n            }\n        });\n        const receipt = {provider: 'GOOGLE', draftId: created.data?.id ?? null, messageId: created.data?.message?.id ?? null, threadId: created.data?.message?.threadId ?? null, readBackConfirmed: false};\n        if (!receipt.draftId) return {...receipt, error: 'Provider draft creation returned no draft ID; reconcile before retrying'};\n        try {\n            const fetched = await gmailClient.users.drafts.get({userId: 'me', id: receipt.draftId, format: 'full'});\n            if (fetched.data?.id !== receipt.draftId || !fetched.data?.message?.id || (receipt.messageId && fetched.data.message.id !== receipt.messageId)) throw new Error('Provider draft identity changed during read-back');\n            const nativeMessage = fetched.data.message;\n            if (!nativeMessage.payload) throw new Error('Provider draft MIME payload missing during read-back');\n            const attachmentManifest = [];\n            const visit = async (part) => {\n                if (part.filename) {\n                    let data = part.body?.data;\n                    if (part.body?.attachmentId) {\n                        const downloaded = await gmailClient.users.messages.attachments.get({userId: 'me', messageId: nativeMessage.id, id: part.body.attachmentId});\n                        data = downloaded.data?.data;\n                    }\n                    if (typeof data !== 'string') throw new Error('Provider attachment bytes missing during read-back');\n                    const bytes = Buffer.from(data, 'base64url');\n                    attachmentManifest.push({filename: part.filename, mimeType: part.mimeType, size: bytes.length, sha256: require('node:crypto').createHash('sha256').update(bytes).digest('hex'), attachmentId: part.body?.attachmentId ?? null});\n                }\n                for (const child of part.parts ?? []) await visit(child);\n            };\n            if (nativeMessage.payload) await visit(nativeMessage.payload);\n            return {...receipt, messageId: nativeMessage.id, threadId: nativeMessage.threadId ?? null, readBackConfirmed: true, nativeMessage, attachmentManifest};\n        } catch (error) {\n            return {...receipt, error: error instanceof Error ? error.message : 'Draft read-back failed; reconcile exact draft before retrying'};\n        }"
+      ]
+    ]
+  },
+  {
+    "path": "modules/messaging/message-outbound-manager/drivers/microsoft/services/microsoft-message-outbound.service.js",
+    "sha256": "82cc916cedfdc1857ed7e57aa777f7b6ef332e456362bb7d03cb6daa8f3dfb47",
+    "changes": [
+      [
+        "        await this.createDraftMessage(microsoftClient, sendMessageInput);",
+        "        const created = await this.createDraftMessage(microsoftClient, sendMessageInput);\n        return {provider: 'MICROSOFT', draftId: created.id, messageId: created.id, threadId: created.conversationId, internetMessageId: created.internetMessageId, readBackConfirmed: false};"
+      ]
+    ]
+  },
+  {
+    "path": "modules/messaging/message-outbound-manager/drivers/imap/services/imap-smtp-message-outbound.service.js",
+    "sha256": "ab658482c9686fa0507b1061b87f1ca08c79bb2acfb36b4be373147535883df3",
+    "changes": [
+      [
+        "            await imapClient.append(draftsFolder.path, messageBuffer, [\n                DRAFT_FLAG\n            ]);",
+        "            const created = await imapClient.append(draftsFolder.path, messageBuffer, [\n                DRAFT_FLAG\n            ]);\n            return {provider: 'IMAP_SMTP_CALDAV', folder: draftsFolder.path, uid: created?.uid == null ? null : String(created.uid), uidValidity: created?.uidValidity == null ? null : String(created.uidValidity), readBackConfirmed: false};"
+      ]
+    ]
+  }
+]);
+
+// Existing native draft operation supports exact-ID read and update without a create fallback.
+specs.find(x=>x.path.endsWith('/draft-email-tool.js')).changes.push(...[
+  [
+    "        try {\n            const result = await this.emailComposerService.composeEmail(parameters, context);",
+    "        try {\n            const draftOperation = parameters.draftOperation ?? 'CREATE';\n            if (!['CREATE', 'READ', 'UPSERT'].includes(draftOperation)) throw new Error('Unsupported draft operation');\n            if (draftOperation !== 'CREATE' && (!parameters.draftId || !parameters.connectedAccountId)) throw new Error('Exact draftId and connectedAccountId are required');\n            if (draftOperation === 'CREATE' && parameters.draftId) throw new Error('Use UPSERT to revise an existing draft');\n            if (draftOperation === 'READ') {\n                const connectedAccount = await this.emailComposerService.getConnectedAccountOrThrow({connectedAccountId: parameters.connectedAccountId, workspaceId: context.workspaceId});\n                if (connectedAccount.provider !== 'GOOGLE') throw new Error('Draft READ is supported only for GOOGLE');\n                const nativeDraft = await this.messageOutboundService.createDraft({draftOperation, draftId: parameters.draftId}, connectedAccount);\n                return {success: nativeDraft.readBackConfirmed === true, message: nativeDraft.readBackConfirmed ? 'Exact provider draft read back' : 'Provider draft read-back failed', result: {connectedAccountId: connectedAccount.id, nativeDraft}};\n            }\n            const result = await this.emailComposerService.composeEmail(parameters, context);"
+  ],
+  [
+    "            const { data } = result;",
+    "            const { data } = result;\n            if (draftOperation === 'UPSERT' && data.connectedAccount.provider !== 'GOOGLE') throw new Error('Draft UPSERT is supported only for GOOGLE');\n            data.draftOperation = draftOperation;\n            data.draftId = parameters.draftId;"
+  ],
+  [
+    "        return this.messageOutboundService.createDraft({",
+    "        return this.messageOutboundService.createDraft({\n            draftOperation: data.draftOperation,\n            draftId: data.draftId,"
+  ],
+  [
+    "        this.inputSchema = _emailtoolschema.EmailToolInputZodSchema;",
+    "        this.inputSchema = _emailtoolschema.EmailToolInputZodSchema.extend({\n            draftId: require('zod').z.string().min(1).optional(),\n            draftOperation: require('zod').z.enum(['CREATE', 'READ', 'UPSERT']).optional()\n        });"
+  ]
+]);
+specs.find(x=>x.path.endsWith('gmail-message-outbound.service.js')).changes.push(...[
+  [
+    "    async createDraft(sendMessageInput, connectedAccount) {\n        const { gmailClient, encodedMessage }",
+    "    async createDraft(sendMessageInput, connectedAccount) {\n        const operation = sendMessageInput.draftOperation ?? 'CREATE';\n        if (!['CREATE', 'READ', 'UPSERT'].includes(operation)) throw new Error('Unsupported draft operation');\n        if (operation !== 'CREATE' && !sendMessageInput.draftId) throw new Error('Exact draftId is required');\n        if (operation === 'CREATE' && sendMessageInput.draftId) throw new Error('Use UPSERT to revise an existing draft');\n        if (operation === 'READ') {\n            const auth = await this.googleOAuth2ClientProvider.getClient(connectedAccount.id);\n            const gmailClient = _googleapis.google.gmail({version: 'v1', auth});\n            return this.readDraftEvidence(gmailClient, {provider: 'GOOGLE', draftId: sendMessageInput.draftId, readBackConfirmed: false});\n        }\n        const { gmailClient, encodedMessage }"
+  ],
+  [
+    "        const created = await gmailClient.users.drafts.create({",
+    "        if (operation === 'UPSERT') {\n            const exact = await gmailClient.users.drafts.get({userId: 'me', id: sendMessageInput.draftId, format: 'minimal'});\n            if (exact.data?.id !== sendMessageInput.draftId) throw new Error('Exact provider draft not found');\n            const receipt = {provider: 'GOOGLE', draftId: sendMessageInput.draftId, messageId: null, readBackConfirmed: false};\n            try {\n                const updated = await gmailClient.users.drafts.update({userId: 'me', id: sendMessageInput.draftId, requestBody: {id: sendMessageInput.draftId, message: {raw: encodedMessage, ...(sendMessageInput.threadExternalId ? {threadId: sendMessageInput.threadExternalId} : {})}}});\n                return this.readDraftEvidence(gmailClient, {...receipt, messageId: updated.data?.message?.id ?? null});\n            } catch (error) {\n                return {...receipt, operationMayHaveApplied: true, error: error instanceof Error ? error.message : 'Draft update uncertain; read exact draft before retry'};\n            }\n        }\n        const created = await gmailClient.users.drafts.create({"
+  ],
+  [
+    "        try {\n            const fetched = await gmailClient.users.drafts.get({userId: 'me', id: receipt.draftId, format: 'full'});",
+    "        return this.readDraftEvidence(gmailClient, receipt);\n    }\n    async readDraftEvidence(gmailClient, receipt) {\n        try {\n            const fetched = await gmailClient.users.drafts.get({userId: 'me', id: receipt.draftId, format: 'full'});"
+  ]
+]);
+specs.push(...[
+  {
+    "path": "../../twenty-shared/dist/workflow.cjs",
+    "sha256": "37f83de363abbe93dc8c20ccb43c3961a75e10bd422447ca315892680c6f3497",
+    "changes": [
+      [
+        "Te=m.extend({type:o.z.literal(`DRAFT_EMAIL`),settings:x})",
+        "Te=m.extend({type:o.z.literal(`DRAFT_EMAIL`),settings:x.extend({input:x.shape.input.extend({draftId:o.z.string().optional(),draftOperation:o.z.union([o.z.enum([`CREATE`,`READ`,`UPSERT`]),b]).optional()})})})"
+      ]
+    ]
+  },
+  {
+    "path": "../../twenty-shared/dist/workflow.mjs",
+    "sha256": "2c6b2b61d7f89292bff4d7bc5d3ee15c0107e32234299191081578ba26ee5de3",
+    "format": "esm",
+    "changes": [
+      [
+        "type: d.literal(\"DRAFT_EMAIL\"),\n\tsettings: w",
+        "type: d.literal(\"DRAFT_EMAIL\"),\n\tsettings: w.extend({input: w.shape.input.extend({draftId: d.string().optional(), draftOperation: d.union([d.enum([\"CREATE\", \"READ\", \"UPSERT\"]), d.string().regex(/^{{[^{}]+}}$/)]).optional()})})"
+      ]
+    ]
+  }
+]);
+
+// Consume the exact reviewed Gmail draft through the existing sender transport.
+specs.push(...[
+  {
+    "path": "engine/core-modules/tool/tools/email-tool/send-email-tool.js",
+    "sha256": "9ab2154ea472c13e907f99aa7f9b3d7192892c23566485127b61258521b6f29c",
+    "changes": [
+      [
+        "            const { data } = result;",
+        "            const { data } = result;\n            if (parameters.providerDraftId && data.connectedAccount.provider !== 'GOOGLE') throw new Error('Sending exact provider draft is supported only for GOOGLE');\n            data.providerDraftId = parameters.providerDraftId;"
+      ],
+      [
+        "                    headerMessageId: sendResult.headerMessageId,",
+        "                    headerMessageId: sendResult.headerMessageId,\n                    messageExternalId: sendResult.messageExternalId,"
+      ],
+      [
+        "        this.inputSchema = _emailtoolschema.EmailToolInputZodSchema;",
+        "        this.inputSchema = _emailtoolschema.EmailToolInputZodSchema.extend({providerDraftId: require('zod').z.string().min(1).optional()});"
+      ]
+    ]
+  },
+  {
+    "path": "modules/messaging/message-outbound-manager/services/send-email.service.js",
+    "sha256": "1bf441dbdad84a8aff384f2dd8452edab7012eef35de4853e3c8e195122bac97",
+    "changes": [
+      [
+        "    toSendMessageInput(data) {\n        return {",
+        "    toSendMessageInput(data) {\n        return {\n            providerDraftId: data.providerDraftId,"
+      ]
+    ]
+  }
+]);
+specs.find(x=>x.path.endsWith('gmail-message-outbound.service.js')).changes.push(...[["    async sendMessage(sendMessageInput, connectedAccount) {", "    async sendMessage(sendMessageInput, connectedAccount) {\n        if (sendMessageInput.providerDraftId) {\n            const auth = await this.googleOAuth2ClientProvider.getClient(connectedAccount.id);\n            const gmailClient = _googleapis.google.gmail({version: 'v1', auth});\n            const exact = await gmailClient.users.drafts.get({userId: 'me', id: sendMessageInput.providerDraftId, format: 'full'});\n            if (exact.data?.id !== sendMessageInput.providerDraftId || !exact.data?.message?.id) throw new Error('Exact provider draft not found; no message sent');\n            const headerMessageId = exact.data.message.payload?.headers?.find(h=>h.name?.toLowerCase() === 'message-id')?.value;\n            const sent = await gmailClient.users.drafts.send({userId: 'me', requestBody: {id: sendMessageInput.providerDraftId}});\n            return {headerMessageId, messageExternalId: sent.data?.id, threadExternalId: sent.data?.threadId};\n        }"]]);
+specs.find(x=>x.path.endsWith('workflow.cjs')).changes.push(...[["Ie=m.extend({type:o.z.literal(`SEND_EMAIL`),settings:x})", "Ie=m.extend({type:o.z.literal(`SEND_EMAIL`),settings:x.extend({input:x.shape.input.extend({providerDraftId:o.z.string().optional()})})})"]]);
+specs.find(x=>x.path.endsWith('workflow.mjs')).changes.push(...[["type: d.literal(\"SEND_EMAIL\"),\n\tsettings: w", "type: d.literal(\"SEND_EMAIL\"),\n\tsettings: w.extend({input: w.shape.input.extend({providerDraftId: d.string().optional()})})"]]);
+
+// Re-read and compare the provider revision immediately before the one send attempt.
+specs.find(x=>x.path.endsWith('gmail-message-outbound.service.js')).changes.push(...[["            const exact = await gmailClient.users.drafts.get({userId: 'me', id: sendMessageInput.providerDraftId, format: 'full'});\n            if (exact.data?.id !== sendMessageInput.providerDraftId || !exact.data?.message?.id) throw new Error('Exact provider draft not found; no message sent');\n            const headerMessageId = exact.data.message.payload?.headers?.find(h=>h.name?.toLowerCase() === 'message-id')?.value;", "            const exact = await gmailClient.users.drafts.get({userId: 'me', id: sendMessageInput.providerDraftId, format: 'raw'});\n            if (exact.data?.id !== sendMessageInput.providerDraftId || !exact.data?.message?.id || !exact.data?.message?.raw) throw new Error('Exact provider draft not found; no message sent');\n            const parsed = await require('postal-mime').parse(Buffer.from(exact.data.message.raw, 'base64url'));\n            const normalizeText = value => String(value ?? '').replace(/\\r\\n/g, '\\n').replace(/\\n+$/, '');\n            const addresses = values => (values ?? []).map(value => String(typeof value === 'string' ? value : value.address ?? '').trim().toLowerCase()).sort();\n            const digest = bytes => require('node:crypto').createHash('sha256').update(Buffer.from(bytes)).digest('hex');\n            const expectedAttachments = (sendMessageInput.attachments ?? []).map(a=>({filename:a.filename,mimeType:a.contentType,sha256:digest(a.content)})).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));\n            const actualAttachments = (parsed.attachments ?? []).map(a=>({filename:a.filename,mimeType:a.mimeType,sha256:digest(a.content)})).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));\n            const matches = parsed.from?.address?.toLowerCase() === connectedAccount.handle?.toLowerCase()\n                && JSON.stringify(addresses(parsed.to)) === JSON.stringify(addresses(sendMessageInput.to))\n                && JSON.stringify(addresses(parsed.cc)) === JSON.stringify(addresses(sendMessageInput.cc))\n                && JSON.stringify(addresses(parsed.bcc)) === JSON.stringify(addresses(sendMessageInput.bcc))\n                && parsed.subject === sendMessageInput.subject\n                && normalizeText(parsed.text) === normalizeText(sendMessageInput.body)\n                && normalizeText(parsed.html) === normalizeText(sendMessageInput.html)\n                && String(parsed.inReplyTo ?? '') === String(sendMessageInput.inReplyTo ?? '')\n                && (!sendMessageInput.threadExternalId || exact.data.message.threadId === sendMessageInput.threadExternalId)\n                && JSON.stringify(actualAttachments) === JSON.stringify(expectedAttachments);\n            if (!matches) throw new Error('Provider draft differs from the reviewed sender, recipients, content, thread or attachment bytes; no message sent');\n            const headerMessageId = parsed.messageId;"]]);
+
 function preparePatches() {
   return specs.map(spec => {
     const absolutePath = path.join(root, spec.path);
@@ -270,7 +473,7 @@ function preparePatches() {
       if (patched.split(before).length !== 2) throw new Error('Patch anchor mismatch: ' + spec.path);
       patched = patched.replace(before, after);
     }
-    new vm.Script(spec.format === 'esm' ? patched.replace(/import[^;]+;/g, '').replace(/export\{[^;]+;/g, '') : patched, { filename: spec.path });
+    new vm.Script(spec.format === 'esm' ? patched.replace(/import[^;]+;/g, '').replace(/export\s*\{[^;]+;/g, '') : patched, { filename: spec.path });
     return { path: spec.path, absolutePath, source, patched };
   });
 }
