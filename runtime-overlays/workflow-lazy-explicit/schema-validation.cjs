@@ -19,12 +19,37 @@ function parseValidatedResponse(text, validate) {
   const json = fenced ? fenced[1].trim() : trimmed;
   // Preserve the existing formatter only for ordinary non-JSON prose.
   // Never let a second model silently repair or reinterpret malformed JSON.
-  if (!fenced && !/^[{\[]/.test(json)) return undefined;
-  let value;
-  try { value = JSON.parse(json); } catch { throw new Error('Agent response JSON is malformed'); }
-  const checked = validate(value);
-  if (!checked.success) throw checked.error;
-  return checked;
+  if (fenced || /^[{\[]/.test(json)) {
+    let value;
+    try { value = JSON.parse(json); } catch { throw new Error('Agent response JSON is malformed'); }
+    const checked = validate(value);
+    if (!checked.success) throw checked.error;
+    return checked;
+  }
+  // Some compatible providers wrap an otherwise exact structured value in a
+  // short explanatory prefix or suffix. Recover only a complete balanced JSON
+  // value that independently passes the caller's closed response schema.
+  const candidates=[];
+  for(let start=0;start<trimmed.length;start++) {
+    if(trimmed[start]!=='{'&&trimmed[start]!=='[')continue;
+    const stack=[],opening=trimmed[start];let quoted=false,escaped=false;
+    for(let i=start;i<trimmed.length;i++) {
+      const char=trimmed[i];
+      if(quoted){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char==='"')quoted=false;continue;}
+      if(char==='"'){quoted=true;continue;}
+      if(char==='{'||char==='[')stack.push(char);
+      else if(char==='}'||char===']'){
+        const expected=char==='}'?'{':'[';
+        if(stack.pop()!==expected)break;
+        if(!stack.length){candidates.push(trimmed.slice(start,i+1));start=i;break;}
+      }
+    }
+  }
+  const valid=[];
+  for(const candidate of [...new Set(candidates)])try{const checked=validate(JSON.parse(candidate));if(checked.success)valid.push(checked);}catch{}
+  if(valid.length===1)return valid[0];
+  if(valid.length>1)throw new Error('Agent response contains multiple schema-valid JSON values');
+  return undefined;
 }
 function describeExecutionError(error) {
   const message = error instanceof Error ? error.message : 'Agent execution failed';

@@ -373,7 +373,12 @@ await test('JSON parsing retains false zero empty strings and strict fenced valu
  for(const text of ['{"flag":false,"n":0,"s":""}','\x60\x60\x60json\n{"flag":false,"n":0,"s":""}\n\x60\x60\x60']){
   assert.equal(JSON.stringify(parseValidatedResponse(text,validate).value),'{"flag":false,"n":0,"s":""}');
  }
+ assert.equal(JSON.stringify(parseValidatedResponse('Here is the exact result:\n{"flag":false,"n":0,"s":""}\nDone.',validate).value),'{"flag":false,"n":0,"s":""}');
+ assert.equal(parseValidatedResponse('Prefix {not JSON} then {"flag":false,"n":0,"s":"{exact} and \\"quoted\\""} suffix',validate).value.s,'{exact} and "quoted"');
  assert.equal(parseValidatedResponse('Ordinary existing prose result',validate),undefined);
+ assert.equal(parseValidatedResponse('Prefix {"flag":false,"n":0} suffix',validate),undefined);
+ assert.equal(parseValidatedResponse('Prefix {"flag":false,"n":0,"s":"unfinished"',validate),undefined);
+ assert.throws(()=>parseValidatedResponse('One {"flag":false,"n":0,"s":"a"} Two {"flag":true,"n":1,"s":"b"}',validate),/multiple schema-valid/);
  for(const text of ['{"flag":', '{"flag":"false","n":0,"s":""}', '{"flag":false,"n":0,"s":"","extra":true}'])assert.throws(()=>parseValidatedResponse(text,validate));
 });
 await test('nested SDK schema error reports the missing field without private data',async()=>{
@@ -542,6 +547,8 @@ await test('native parse recovery accepts only bounded schema-valid text and pre
  const steps=[{toolCalls:[{toolName:'read'}]}],error={text:'\x60\x60\x60json\n{"runStatus":"PARTIAL","processed":1}\n\x60\x60\x60',finishReason:'stop',usage};
  const r=recoverStructuredParse(error,validate,true,steps);
  assert.equal(r.steps,steps);assert.equal(r.usage,usage);assert.equal(r.text,error.text);
+ const wrapped={...error,text:'Exact structured result follows.\n{"runStatus":"PARTIAL","processed":1}\nEnd.'};
+ assert.equal(recoverStructuredParse(wrapped,validate,true,steps).text,wrapped.text);
  for(const e of [{...error,text:'{"runStatus":'}, {...error,text:'{"runStatus":"PARTIAL"}'}, {...error,text:'ordinary prose'}, {...error,text:' '.repeat(262145)}, {...error,finishReason:'length'}]) assert.throws(()=>recoverStructuredParse(e,validate,true),x=>x===e);
  assert.throws(()=>recoverStructuredParse(error,validate,false),x=>x===error);
  assert.throws(()=>recoverStructuredParse(error,undefined,true),x=>x===error);
