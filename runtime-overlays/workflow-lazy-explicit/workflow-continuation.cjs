@@ -30,6 +30,8 @@ function inspectContinuation(steps, text) {
   if (completed && pages.size && !writes.some(c=>c.ok)) issues.push('COMPLETED has no successful permitted business mutation or independent read-back. Complete the intended reconciliation, or use an honest NO_WORK/NEEDS_EVIDENCE result with actual coverage; do not invent a completed write.');
   const failedWrites = writes.filter(c=>!c.ok);
   if (completed && failedWrites.length && !writes.some(c=>c.ok)) issues.push('Every attempted business mutation failed; COMPLETED is false. Learn the exact failed tool schema and repair the intended permitted operation, then read it back, or report TOOLING_BLOCKED. Native update_one_opportunity uses id plus direct fields, never opportunityId/set.');
+  const report=String(text).replace(/\*\*/g,'');
+  if(/STATUS\s*:\s*NEEDS_EVIDENCE\b/.test(report) && /MISSING_EVIDENCE\s*:\s*(?:none|nothing|no missing evidence)\b/i.test(report)) issues.push('NEEDS_EVIDENCE contradicts MISSING_EVIDENCE:none. An unread or unavailable source must be identified for that status. If coverage is complete, finish the supported reconciliation and read it back; waiting for another person is a business state to record, not an evidence gap.');
   return { issues, calls: calls.length };
 }
 function addUsage(a = {}, b = {}) {
@@ -76,7 +78,20 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   }}]));
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
-    const result = await generateText({...options, tools, messages, stopWhen: async state => used >= maxCalls || (await Promise.all(stopConditions.map(stop=>stop(state)))).some(Boolean)});
+    const observedSteps=[];
+    const result = await generateText({...options, tools, messages,
+      onStepFinish:async step=>{observedSteps.push(step);await options.onStepFinish?.(step);},
+      experimental_repairToolCall:async repairInput=>{
+        const match=repairInput.toolCall?.toolName?.match(/^(.+)<\|channel\|>(?:analysis|commentary|json)$/);
+        if(match && Object.hasOwn(tools,match[1])) return {...repairInput.toolCall,toolName:match[1]};
+        return options.experimental_repairToolCall?.(repairInput)??null;
+      },
+      stopWhen: async state => used >= maxCalls || (await Promise.all(stopConditions.map(stop=>stop(state)))).some(Boolean)
+    }).catch(error=>{
+      if(!policy.recoverError)throw error;
+      const recovered=policy.recoverError(error,observedSteps);
+      return {...recovered,response:observedSteps.at(-1)?.response};
+    });
     const roundSteps = result.steps ?? [];
     steps.push(...roundSteps);
     usage = addUsage(usage,result.totalUsage ?? result.usage);

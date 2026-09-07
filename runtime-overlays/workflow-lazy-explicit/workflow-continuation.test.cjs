@@ -57,3 +57,23 @@ test('actual opportunity mutation is blocked until exact pages are complete and 
  }}}},{enabled:true});
  assert.equal(writes,1);
 });
+test('structured parse recovery keeps real step messages inside the continuation loop',async()=>{
+ let rounds=0;const originalError=new Error('native structured parse');
+ const first=page(0,2);first.response={messages:[{role:'assistant',content:'native tool call'},{role:'tool',content:'native first page'}]};
+ const result=await generateWithContinuation(async options=>{
+  rounds++;
+  if(rounds===1){await options.onStepFinish(first);throw originalError;}
+  assert.deepEqual(options.messages.slice(1,3),first.response.messages);
+  return receipt([page(2,null)],'{"status":"NEEDS_EVIDENCE"}');
+ },{tools:{},messages:[{role:'user',content:'case'}]},{enabled:true,recoverError:(error,steps)=>{assert.equal(error,originalError);return receipt(steps,'{"status":"TOOLING_BLOCKED"}');}});
+ assert.equal(rounds,2);assert.equal(result.steps.length,2);
+});
+test('only exact registered tool with known malformed channel suffix is repaired',async()=>{
+ const input='{ "id": "exact" }';
+ await generateWithContinuation(async options=>{
+  const repaired=await options.experimental_repairToolCall({toolCall:{toolName:'execute_tool<|channel|>json',input}});
+  assert.equal(repaired.toolName,'execute_tool');assert.equal(repaired.input,input);
+  assert.equal(await options.experimental_repairToolCall({toolCall:{toolName:'send_everything<|channel|>json',input}}),null);
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{execute_tool:{execute:async()=>({})}}},{enabled:true});
+});
