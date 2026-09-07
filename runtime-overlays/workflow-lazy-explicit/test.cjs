@@ -84,15 +84,17 @@ await test('explicit workflow logic functions require admin configuration and bo
  registry.buildToolIndex=async()=>[
   {name:'get_opportunity',category:'record'},
   {name:'app_crm_runtime_clock',category:'logic_function'},
+  {name:'app_crm_case_context',category:'logic_function'},
   {name:'app_linkedin_conversations',category:'logic_function'},
   {name:'app_arbitrary_writer',category:'logic_function'},
   {name:'run_agent',category:'ai'},
   {name:'get_tool_output',category:'record'}
  ];
  try {
-  const requested={...agent,modelConfiguration:{workflowReadOnlyToolNames:['app_crm_runtime_clock','app_linkedin_conversations','app_arbitrary_writer','run_agent','get_tool_output']}};
+  const requested={...agent,modelConfiguration:{workflowReadOnlyToolNames:['app_crm_case_context','app_crm_runtime_clock','app_linkedin_conversations','app_arbitrary_writer','run_agent','get_tool_output']}};
   const scoped=await executor.buildLazyRegistryTools({...base,agent:requested,requireExplicitObjectGrants:true});
   assert(scoped.catalogSection.includes('app_crm_runtime_clock'));
+  assert(scoped.catalogSection.includes('app_crm_case_context'));
   assert(scoped.catalogSection.includes('app_linkedin_conversations'));
   for(const denied of ['app_arbitrary_writer','run_agent','get_tool_output']){
    assert(!scoped.catalogSection.includes(denied));
@@ -101,6 +103,8 @@ await test('explicit workflow logic functions require admin configuration and bo
   for(const opts of [{...base,requireExplicitObjectGrants:true},{...base,agent:requested}]){
    const out=await executor.buildLazyRegistryTools(opts);
    assert(!out.catalogSection.includes('app_crm_runtime_clock'));
+   assert(!out.catalogSection.includes('app_crm_case_context'));
+   await assert.rejects(out.tools.execute_tool.execute({toolName:'app_crm_case_context',args:{}}));
   }
  } finally {registry.buildToolIndex=prior;}
 });
@@ -562,9 +566,19 @@ await test('draft email tool exposes provider evidence separately from input ech
  const tool=new Draft({composeEmail:async()=>({success:true,data})},{createDraft:async()=>nativeDraft});
  const out=await tool.execute({},{});assert.equal(out.success,true);assert.equal(out.result.nativeDraft,nativeDraft);assert.equal(out.result.attachmentCount,0);
 });
+await test('native email tool preserves Sent proof independently from echoed input and CRM persistence',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('/send-email-tool.js'));
+ const Send=moduleClass(p.patched,'SendEmailTool',{'./email-tool.schema':{EmailToolInputZodSchema:{extend:()=>({})}}});
+ const nativeSent={provider:'GOOGLE',messageId:'native-sent',readBackConfirmed:false,error:'read timeout'};
+ const data={connectedAccount:{id:'account',provider:'GOOGLE'},recipients:{to:['to@example.com'],cc:[],bcc:[]},attachments:[],sanitizedSubject:'subject',sanitizedHtmlBody:'body',plainTextBody:'body',shouldPersistMessage:true};
+ let sends=0;
+ const tool=new Send({composeEmail:async()=>({success:true,data})},{sendComposedEmail:async()=>{sends++;return {messageExternalId:'native-sent',nativeSent};},persistSentMessage:async()=>undefined});
+ const out=await tool.execute({providerDraftId:'d1'},{workspaceId:'workspace'});
+ assert.equal(sends,1);assert.equal(out.success,true);assert.equal(out.result.nativeSent,nativeSent);assert.equal(out.result.messageExternalId,'native-sent');assert.equal(out.result.messageId,undefined);
+});
 function draftFixture(){
  const p=PATCHES.find(x=>x.path.endsWith('gmail-message-outbound.service.js'));
- const calls=[];let edited=false,missing=false;
+ const calls=[];let edited=false,missing=false,sentMode='valid';
  const message={id:'m1',threadId:'t1',payload:{headers:[],body:{data:''}}};
  const parsed={from:{address:'me@example.com'},to:[{address:'to@example.com'}],cc:[],bcc:[],subject:'subject',text:'body',html:'<p>body</p>',messageId:'<message>',attachments:[]};
  const client={users:{drafts:{
@@ -572,11 +586,11 @@ function draftFixture(){
  create:async args=>{calls.push(['create',args]);throw Error('CREATE must not run');},
  update:async args=>{calls.push(['update',args]);return {data:{id:args.id,message}};},
  send:async args=>{calls.push(['send',args]);return {data:{id:'sent-id',threadId:'t1'}};}
- }}};
+ },messages:{get:async args=>{calls.push(['sent-read',args]);if(sentMode==='timeout')throw Error('read timeout');return {data:{...message,id:sentMode==='identity'?'other':'sent-id',labelIds:sentMode==='label'?[]:['SENT'],payload:{headers:[],parts:[{filename:'proof.pdf',mimeType:'application/pdf',body:{attachmentId:'a1'}}]}}};},attachments:{get:async args=>{calls.push(['sent-attachment',args]);return {data:sentMode==='bytes'?{}:{data:Buffer.from('sent bytes').toString('base64url')}};}}}}};
  const Gmail=moduleClass(p.patched,'GmailMessageOutboundService',{'googleapis':{google:{gmail:()=>client}},'@sniptt/guards':{isNonEmptyString:x=>!!x},'postal-mime':{parse:async()=>({...parsed,subject:edited?'edited':parsed.subject})},'node:crypto':require('node:crypto')});
  const service=new Gmail();service.googleOAuth2ClientProvider={getClient:async()=>({})};service.composeGmailMessage=async()=>({gmailClient:client,encodedMessage:'reviewed'});
  const input={providerDraftId:'d1',to:['to@example.com'],cc:[],bcc:[],subject:'subject',body:'body',html:'<p>body</p>',threadExternalId:'t1',attachments:[]};
- return {service,calls,input,account:{id:'account',handle:'me@example.com'},edit:()=>{edited=true;},missing:()=>{missing=true;}};
+ return {service,calls,input,account:{id:'account',handle:'me@example.com'},edit:()=>{edited=true;},missing:()=>{missing=true;},sentMode:mode=>{sentMode=mode;}};
 }
 await test('READ performs no provider writes and returns exact provider evidence',async()=>{
  const f=draftFixture();const out=await f.service.createDraft({draftOperation:'READ',draftId:'d1'},f.account);
@@ -598,8 +612,27 @@ await test('unknown draft cannot fall back to create or new send',async()=>{
 });
 await test('exact reviewed draft is consumed once and preserves native sent receipt',async()=>{
  const f=draftFixture();const out=await f.service.sendMessage(f.input,f.account);
- assert.deepEqual(f.calls.map(x=>x[0]),['get','send']);assert.equal(f.calls[1][1].requestBody.id,'d1');
+ assert.deepEqual(f.calls.map(x=>x[0]),['get','send','sent-read','sent-attachment']);assert.equal(f.calls[1][1].requestBody.id,'d1');
  assert.equal(out.messageExternalId,'sent-id');assert.equal(out.threadExternalId,'t1');assert.equal(out.headerMessageId,'<message>');
+});
+await test('Sent proof uses independently fetched MIME, SENT label and downloaded attachment bytes',async()=>{
+ const f=draftFixture();const out=await f.service.sendMessage(f.input,f.account);
+ assert.equal(out.nativeSent.readBackConfirmed,true);assert.equal(out.nativeSent.messageId,'sent-id');
+ assert.equal(out.nativeSent.nativeMessage.labelIds[0],'SENT');
+ assert.equal(out.nativeSent.attachmentManifest[0].sha256,require('node:crypto').createHash('sha256').update('sent bytes').digest('hex'));
+ assert.equal(f.calls[2][1].id,'sent-id');assert.equal(f.calls[2][1].format,'full');
+ assert.equal(f.calls[3][1].messageId,'sent-id');assert.equal(f.calls[3][1].id,'a1');
+});
+await test('Sent read-back timeout, identity, label and missing bytes never repeat the successful send',async()=>{
+ for(const mode of ['timeout','identity','label','bytes']){
+  const f=draftFixture();f.sentMode(mode);const out=await f.service.sendMessage(f.input,f.account);
+  assert.equal(out.nativeSent.readBackConfirmed,false);assert.equal(out.nativeSent.messageId,'sent-id');
+  assert.equal(out.messageExternalId,'sent-id');assert(out.nativeSent.error);assert.equal(f.calls.filter(x=>x[0]==='send').length,1);
+ }
+});
+await test('missing send receipt fails proof without inventing a Sent ID or retrying',async()=>{
+ const f=draftFixture();const out=await f.service.readSentEvidence({},undefined,undefined);
+ assert.equal(out.readBackConfirmed,false);assert.equal(out.messageId,null);assert(out.error);assert.equal(f.calls.length,0);
 });
 await test('provider edit after approval blocks exact draft send before mutation',async()=>{
  const f=draftFixture();f.edit();await assert.rejects(f.service.sendMessage(f.input,f.account),/differs from the reviewed/);
