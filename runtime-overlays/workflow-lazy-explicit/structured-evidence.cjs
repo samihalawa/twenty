@@ -17,7 +17,7 @@ function prepare(objectName,args,current) {
   const field=fields[objectName];
   const custom=customFields[objectName];
   if(!custom && (!field || args.evidenceJSON===undefined))return null;
-  if(!args.expectedUpdatedAt || !current?.id || current.id!==args.id || current.updatedAt!==args.expectedUpdatedAt)throw Error('EVIDENCE_REVISION_CONFLICT: read the current exact record and reconcile before retrying; no mutation executed.');
+  if(!args.expectedUpdatedAt || !current?.id || current.id!==args.id || (current.updatedAt instanceof Date?current.updatedAt.toISOString():current.updatedAt)!==args.expectedUpdatedAt)throw Error('EVIDENCE_REVISION_CONFLICT: read the current exact record and reconcile before retrying; no mutation executed.');
   if(args.evidenceJSON!==undefined && args[field]!==undefined)throw Error('Use evidenceJSON or '+field+', never both.');
   const incoming=args.evidenceJSON;
   if(incoming!==undefined && (!incoming || typeof incoming!=='object' || Array.isArray(incoming)))throw Error('evidenceJSON must be a JSON object.');

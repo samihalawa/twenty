@@ -30,3 +30,6 @@ test('synced calendar permits only exact opportunity link with revision CAS',()=
  assert.throws(()=>prepare('calendarEvent',{...args,startsAt:'invented'},current),/custom fields/);
  assert.throws(()=>prepare('calendarEvent',{...args,expectedUpdatedAt:undefined},current),/REVISION/);
 });
+test('native Date timestamp compares to exact API ISO revision without weakening CAS',()=>{
+ assert.ok(prepare('opportunity',input,{...current,updatedAt:new Date(current.updatedAt)}));
+});
