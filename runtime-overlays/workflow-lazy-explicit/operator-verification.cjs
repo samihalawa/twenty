@@ -193,7 +193,12 @@ async function verifyOperatorRun(input) {
   const run = matches[0], checked = inspectOperatorExecution(run, input.agentStepId);
   if (checked.problems.length) throw Error("OPERATOR_UNVERIFIED [" + run.id + "]: " + checked.problems.join("; "));
   const records = [], preparationRequests = [];
+  const finalWrites = /* @__PURE__ */ new Map();
   for (const write of checked.writes) {
+    const object = write.name.replace(/^(update|create|upsert)_one_/, ""), id = write.args?.id ?? write.output?.result?.id;
+    finalWrites.set(object + ":" + String(id), write);
+  }
+  for (const write of finalWrites.values()) {
     const object = write.name.replace(/^(update|create|upsert)_one_/, "");
     const id = write.args?.id ?? write.output?.result?.id;
     if (!["opportunity", "message_thread", "interaction", "calendar_event", "ai_artifact_generation", "interview_review"].includes(object)) throw Error("Unsupported operator write verification: " + object);

@@ -25,7 +25,7 @@ async function executeCaseContext(invoke,args,workspaceId) {
  }
  const sections=data.__nativeSnapshot.sections,cursor=Number(args.cursor??0);if(!Number.isInteger(cursor)||cursor<0||cursor>sections.length)throw Error('INVALID_CASE_CURSOR');
  const page=[];let bytes=0,next=cursor;
- for(;next<sections.length;next++){const size=Buffer.byteLength(JSON.stringify(sections[next]));if(page.length&&bytes+size>32000)break;page.push(sections[next]);bytes+=size;}
+ for(;next<sections.length;next++){const size=Buffer.byteLength(JSON.stringify(sections[next]));if(page.length&&bytes+size>12000)break;page.push(sections[next]);bytes+=size;}
  if(cursor>0&&next===sections.length){const checked=await fresh();if(checked.error)return checked;if(checked.data.fingerprint!==data.fingerprint)throw Error('CASE_CONTEXT_CHANGED: material source changes occurred during reading; restart cursor0.');}
  const {__nativeSnapshot,...publicData}=data;
  return {status:'SUCCESS',data:{...publicData,cursor,nextCursor:next<sections.length?next:null,hasNextPage:next<sections.length,sourceCoverageComplete:next===sections.length,contentCoverageComplete:cursor===0&&next===sections.length,canJudgeCase:next===sections.length,sections:page,nextRead:next<sections.length?{toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:args.opportunityId,cursor:next,fingerprint:data.fingerprint}}:null}};

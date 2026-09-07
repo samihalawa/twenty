@@ -24,6 +24,17 @@ test('repair preserves original and native response messages, model and token se
  assert.deepEqual(seen[1].messages.slice(0,2),[{role:'user',content:'exact case'},...a.response.messages]);
  assert.match(seen[1].messages.at(-1).content,/cursor.*2/);assert.equal(result.steps.length,2);assert.equal(result.usage.outputTokens,10);
 });
+test('length-limited premature output continues to the unread native cursor',async()=>{
+ let rounds=0;const model={};
+ const result=await generateWithContinuation(async options=>{
+  rounds++;
+  assert.equal(options.model,model);assert.equal(options.maxOutputTokens,8192);
+  if(rounds===1)return {...receipt([page(0,2)],'{"status":"PREPARED","content":"partial"'),finishReason:'length'};
+  assert.match(options.messages.at(-1).content,/cursor.*2/);
+  return receipt([page(2,null)],'STATUS: NEEDS_EVIDENCE');
+ },{model,maxOutputTokens:8192,messages:[{role:'user',content:'prepare exact case'}],tools:{}},{enabled:true,maxRepairs:3});
+ assert.equal(rounds,2);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
+});
 test('same run tool budget prevents another actual tool execution',async()=>{
  let executions=0,rounds=0;
  const result=await generateWithContinuation(async opts=>{rounds++;await opts.tools.execute_tool.execute({});return receipt([page(0,2)]);},{tools:{execute_tool:{execute:async()=>{executions++;}}}},{enabled:true,maxToolCalls:1});

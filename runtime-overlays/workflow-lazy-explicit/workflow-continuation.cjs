@@ -161,7 +161,12 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
     const originalMessages = JSON.parse(JSON.stringify(result.response?.messages?.length ? result.response.messages : nativeResponseMessages(roundSteps.length?roundSteps:observedSteps,result.text)));
     if (!checked.issues.length) return {...result,text:result.text,finishReason:result.finishReason,usage,totalUsage:usage,steps,response:result.response};
-    const stopReason=policy.shouldContinue?.()===false?'CREDITS_UNAVAILABLE':used>=maxCalls||checked.calls>=maxCalls?'TOOL_BUDGET_EXHAUSTED':stalledRounds>maxRepairs?'NO_PROGRESS_REPAIR_LIMIT_REACHED':result.finishReason==='length'?'OUTPUT_BUDGET_EXHAUSTED':null;
+    // A length-limited draft can still be repaired in the same native execution.
+    // Keep the fixed per-round output limit, retain the real tool history, and
+    // let the validation feedback drive the model to the unread cursor. Stop
+    // only when the native tool budget, credits, or bounded no-progress limit
+    // is actually exhausted.
+    const stopReason=policy.shouldContinue?.()===false?'CREDITS_UNAVAILABLE':used>=maxCalls||checked.calls>=maxCalls?'TOOL_BUDGET_EXHAUSTED':stalledRounds>maxRepairs?'NO_PROGRESS_REPAIR_LIMIT_REACHED':null;
     if (stopReason) {
       return {...result,nativeExecutionError:stopReason+': '+checked.issues.join('; '),text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
     }

@@ -12,9 +12,9 @@ test('changed native source at terminal invalidates previous fingerprint',async(
  for(let i=0;i<3;i++)args=(await executeCaseContext(invoke,args,'workspace')).data.nextRead.arguments;
  await assert.rejects(executeCaseContext(invoke,args,'workspace'),/CASE_CONTEXT_CHANGED/);
 });
-test('whole native Unicode tool response stays under49152bytes with32KBpages',async()=>{
+test('whole native Unicode tool response stays bounded with12KBpages',async()=>{
  const invoke=async()=>({status:'SUCCESS',data:{mode:'READ_CASE',fingerprint:'unicode',totalSections:20,__nativeSnapshot:{sections:Array.from({length:20},(_,i)=>({sourceId:String(i),text:'你🙂é\\"'.repeat(200)}))}}});
  const r=await executeCaseContext(invoke,{mode:'READ_CASE',opportunityId:'unicode'},'workspace');
- assert.ok(Buffer.byteLength(JSON.stringify(r))<49152);
+ assert.ok(Buffer.byteLength(JSON.stringify(r))<30000);
  assert.ok(r.data.sections.length>1);assert.equal(r.data.hasNextPage,true);
 });
