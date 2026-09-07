@@ -516,6 +516,20 @@ await test('both workflow modules provide the existing source build service',asy
 });
 
 
+await test('continuation native Date records match installed ModelMessage schema after exact wire serialization',async()=>{
+ const {modelMessageSchema}=require('node:module').createRequire('/app/packages/twenty-server/package.json')('ai');
+ const {generateWithContinuation}=require('./workflow-continuation.cjs');let rounds=0;
+ const raw={role:'tool',content:[{type:'tool-result',toolName:'execute_tool',toolCallId:'actual',output:{type:'json',value:{success:true,result:{records:[{id:'message',receivedAt:new Date('2026-09-04T19:06:47Z'),text:'Exact unmodified source body'}]}}}}]};
+ assert.equal(modelMessageSchema.safeParse(raw).success,false);
+ const nativePage={toolCalls:[{toolCallId:'page',toolName:'execute_tool',input:{toolName:'app_crm_case_context',arguments:{opportunityId:'case'}}}],toolResults:[{toolCallId:'page',type:'tool-result',output:{success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor:0,nextCursor:1,totalSections:2,hasNextPage:true,sections:[{}],fingerprint:'fp'}}}]};
+ await generateWithContinuation(async options=>{
+  if(++rounds===1)return {steps:[nativePage],text:'STATUS: NEEDS_EVIDENCE',finishReason:'stop',response:{messages:[raw]}};
+  for(const message of options.messages)assert.equal(modelMessageSchema.safeParse(message).success,true);
+  assert.equal(options.messages[0].content[0].output.value.result.records[0].receivedAt,'2026-09-04T19:06:47.000Z');
+  assert.equal(options.messages[0].content[0].output.value.result.records[0].text,'Exact unmodified source body');
+  return {steps:[],text:'STATUS: NEEDS_EVIDENCE',finishReason:'stop',response:{messages:[]}};
+ },{tools:{},messages:[]},{enabled:true,maxRepairs:1});assert.equal(rounds,2);
+});
 await test('native parse recovery accepts only bounded schema-valid text and preserves tool history',async()=>{
  const {recoverStructuredParse}=require('./schema-validation.cjs'),validate=compileResponseSchema(exactSchema);
  const steps=[{toolCalls:[{toolName:'read'}]}],error={text:'\x60\x60\x60json\n{"runStatus":"PARTIAL","processed":1}\n\x60\x60\x60',finishReason:'stop',usage};

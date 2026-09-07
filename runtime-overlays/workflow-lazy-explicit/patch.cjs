@@ -67,7 +67,7 @@ const specs = [
       ],
       [
         "if (agentSchema) {",
-        "const directResponse = validateResponse ? require('/opt/workflow-lazy-tools/schema-validation.cjs').parseValidatedResponse(textResponse.text, validateResponse) : undefined;\n            if (directResponse !== undefined) result = directResponse.value;\n            if (validateResponse && directResponse === undefined) {"
+        "const directResponse = textResponse.nativeExecutionError ? {value:{runStatus:'BLOCKED',reasons:textResponse.nativeExecutionError}} : validateResponse ? require('/opt/workflow-lazy-tools/schema-validation.cjs').parseValidatedResponse(textResponse.text, validateResponse) : undefined;\n            if (directResponse !== undefined) result = directResponse.value;\n            if (validateResponse && directResponse === undefined) {"
       ],
       [
         "system: `${baseSystemPrompt}\\n\\n${agent ? (0, _utils.tipTapDocumentToMarkdown)(agent.prompt) : ''}${toolCatalogSection}`,",
