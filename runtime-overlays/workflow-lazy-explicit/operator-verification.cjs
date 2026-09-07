@@ -1,4 +1,3 @@
-// Generated from Career Ops src/server/operator-verification.ts.
 "use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -138,7 +137,22 @@ function inspectOperatorExecution(run, agentStepId) {
     const bounded = sourceReads.filter((c) => c.args?.receivedAt || c.args?.occurredAt || c.args?.startsAt || c.args?.and);
     if (!bounded.length) problems.push("NO_WORK has no bounded source search");
     if (bounded.some((c) => c.output?.result?.hasNextPage !== false)) problems.push("NO_WORK discovery pagination is incomplete");
-    if (bounded.some((c) => Number(c.output?.result?.count ?? c.output?.result?.records?.length ?? 0) > 0)) problems.push("NO_WORK requires evidence that discovered candidates were assessed");
+    const acknowledgements = [];
+    for (const line of report.split("\n")) {
+      const m = line.replace(/\*\*/g, "").match(/^DISCOVERY_ACK:\s*(\[.*\])\s*$/);
+      if (m) try {
+        const v = JSON.parse(m[1]);
+        if (Array.isArray(v)) acknowledgements.push(...v);
+      } catch {
+      }
+    }
+    for (const c of bounded) {
+      const rows = c.output?.result?.records;
+      if (Number(c.output?.result?.count ?? rows?.length ?? 0) <= 0) continue;
+      const ids = Array.isArray(rows) ? rows.map((r) => r.id) : [];
+      const ack = acknowledgements.find((a) => a.toolName === c.name && a.offset === (c.args.offset ?? 0) && Array.isArray(a.dispositions) && a.dispositions.length === ids.length && new Set(a.dispositions.map((d) => d.sourceId)).size === ids.length && a.dispositions.every((d) => ids.includes(d.sourceId)));
+      if (!ids.length || !ack || !ack.dispositions.every((d) => d.status === "IGNORED" && typeof d.reason === "string" && d.reason.length > 10 && reads.some((read) => (read.output?.result?.records ?? [read.output?.result]).some((r) => r?.id === d.sourceId && (typeof r.text === "string" || typeof r.summary?.markdown === "string" || r.startsAt && r.endsAt && typeof r.title === "string"))))) problems.push("NO_WORK requires full native content and an explicit ignored disposition for every discovered candidate");
+    }
   }
   for (const write of writes) {
     if (write.name === "update_one_opportunity") {
