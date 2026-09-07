@@ -474,6 +474,23 @@ specs.find(x=>x.path.endsWith('/send-email.service.js')).changes.push(["        
 specs.find(x=>x.path.endsWith('workflow.cjs')).changes.push(["providerDraftId:o.z.string().optional()", "providerDraftId:o.z.string().optional(),approvedThreadContextFingerprint:o.z.string().optional()"]);
 specs.find(x=>x.path.endsWith('workflow.mjs')).changes.push(["providerDraftId: d.string().optional()", "providerDraftId: d.string().optional(), approvedThreadContextFingerprint: d.string().optional()"]);
 
+// Keep the native model conversation alive only for mechanically unfulfilled tool contracts.
+specs.find(x=>x.path.endsWith('agent-async-executor.service.js')).changes.push(
+  ["            const textResponse = await (0, _ai.generateText)({", "            const textResponse = await require('/opt/workflow-lazy-tools/workflow-continuation.cjs').generateWithContinuation(_ai.generateText, {"],
+  ["            }).catch(error => {", "            }, {enabled: toolLoadingStrategy === 'lazy-workflow-explicit' && agent?.modelConfiguration?.workflowReadOnlyToolNames?.includes('app_crm_case_context'), maxToolCalls: 40, shouldContinue: () => !hasNoMoreAvailableCredits}).catch(error => {"]
+);
+
+// Native app tools must build edited source just like native code/workflow actions.
+specs.push({
+  path:'engine/core-modules/tool-provider/services/tool-executor.service.js',
+  sha256:'4078b038e901e186fd94b90c82df6ba5b72e755110102a3370e953d9373bd0f6',
+  changes:[
+    ['const _logicfunctionexecutorservice = require("../../logic-function/logic-function-executor/logic-function-executor.service");','const _logicfunctionexecutorservice = require("../../../metadata-modules/logic-function/services/logic-function-from-source.service");'],
+    ['this.logicFunctionExecutorService.execute({\n            logicFunctionId: ref.logicFunctionId,','this.logicFunctionExecutorService.executeOneFromSource({\n            id: ref.logicFunctionId,'],
+    ['typeof _logicfunctionexecutorservice.LogicFunctionExecutorService === "undefined" ? Object : _logicfunctionexecutorservice.LogicFunctionExecutorService','typeof _logicfunctionexecutorservice.LogicFunctionFromSourceService === "undefined" ? Object : _logicfunctionexecutorservice.LogicFunctionFromSourceService']
+  ]
+});
+
 function preparePatches() {
   return specs.map(spec => {
     const absolutePath = path.join(root, spec.path);

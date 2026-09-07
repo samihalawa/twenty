@@ -1,0 +1,67 @@
+'use strict';
+// Mechanical tool-result contracts only. The same native model retains all judgment.
+function inspectContinuation(steps, text) {
+  const calls = [];
+  for (const step of steps) {
+    const results = new Map((step.toolResults ?? step.content?.filter(p => p.type === 'tool-result' || p.type === 'tool-error') ?? []).map(r => [r.toolCallId, r]));
+    for (const c of step.toolCalls ?? step.content?.filter(p => p.type === 'tool-call') ?? []) {
+      const r = results.get(c.toolCallId), raw = c.input ?? c.args;
+      const name = c.toolName === 'execute_tool' ? raw?.toolName : c.toolName;
+      const args = c.toolName === 'execute_tool' ? raw?.arguments : raw;
+      const output = r?.output ?? r?.result;
+      calls.push({ name, args, output: output?.result ?? output, ok: !!r && r.type !== 'tool-error' && !r.error && output?.success !== false && !output?.error });
+    }
+  }
+  const issues = [], pages = new Map();
+  for (const call of calls) if (call.ok && call.name === 'app_crm_case_context' && call.output?.mode === 'READ_CASE') {
+    const p = call.output, prior = pages.get(p.opportunityId);
+    if (p.cursor === 0) pages.set(p.opportunityId, { fingerprint: p.fingerprint, next: p.nextCursor, complete: p.hasNextPage === false, page: p });
+    else if (prior && prior.fingerprint === p.fingerprint && prior.next === p.cursor) pages.set(p.opportunityId, { fingerprint: p.fingerprint, next: p.nextCursor, complete: p.hasNextPage === false, page: p });
+  }
+  for (const [id, state] of pages) if (!state.complete) issues.push('Unread source pages for ' + id + '. Continue the exact next tool call: ' + JSON.stringify(state.page.nextRead ?? {toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:id,cursor:state.next,fingerprint:state.fingerprint}}));
+  const writes = calls.map((c, index) => ({...c,index})).filter(c => /^(update|create|upsert)_one_/.test(c.name));
+  for (const write of writes.filter(c=>c.ok)) {
+    const id = write.args?.id ?? write.output?.id ?? write.output?.records?.[0]?.id;
+    const object = write.name.replace(/^(update|create|upsert)_one_/,'');
+    if (!id || !calls.slice(write.index + 1).some(c=>c.ok && c.name === 'find_one_' + object && c.args?.id === id)) issues.push('Successful ' + write.name + ' has no independent native read-back. Read exact ' + object + ' ID ' + (id ?? 'returned by the successful mutation') + ' before reporting completion. Do not repeat the mutation.');
+  }
+  const completed = /STATUS\s*[:*\s]+COMPLETED\b/.test(String(text).replace(/\*\*/g,''));
+  if (completed && pages.size && !writes.some(c=>c.ok)) issues.push('COMPLETED has no successful permitted business mutation or independent read-back. Complete the intended reconciliation, or use an honest NO_WORK/NEEDS_EVIDENCE result with actual coverage; do not invent a completed write.');
+  const failedWrites = writes.filter(c=>!c.ok);
+  if (completed && failedWrites.length && !writes.some(c=>c.ok)) issues.push('Every attempted business mutation failed; COMPLETED is false. Learn the exact failed tool schema and repair the intended permitted operation, then read it back, or report TOOLING_BLOCKED. Native update_one_opportunity uses id plus direct fields, never opportunityId/set.');
+  return { issues, calls: calls.length };
+}
+function addUsage(a = {}, b = {}) {
+  const out = {...a};
+  for (const [key,value] of Object.entries(b)) {
+    if (typeof value === 'number') out[key] = (typeof a[key] === 'number' ? a[key] : 0) + value;
+    else if (value && typeof value === 'object') out[key] = addUsage(a[key],value);
+  }
+  return out;
+}
+async function generateWithContinuation(generateText, options, policy = {}) {
+  if (!policy.enabled) return generateText(options);
+  const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
+  let used = 0, usage = {}, messages = [...(options.messages ?? [])];
+  const steps = [];
+  const tools = Object.fromEntries(Object.entries(options.tools ?? {}).map(([name,tool]) => [name, !tool.execute ? tool : {...tool,execute:async (...args)=>{
+    if (used >= maxCalls) throw new Error('NATIVE_TOOL_BUDGET_EXHAUSTED: preserve unfinished work for continuation');
+    used++;
+    return tool.execute(...args);
+  }}]));
+  for (let repair = 0; ; repair++) {
+    const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
+    const result = await generateText({...options, tools, messages, stopWhen: async state => used >= maxCalls || (await Promise.all(stopConditions.map(stop=>stop(state)))).some(Boolean)});
+    const roundSteps = result.steps ?? [];
+    steps.push(...roundSteps);
+    usage = addUsage(usage,result.totalUsage ?? result.usage);
+    const checked = inspectContinuation(steps,result.text);
+    const originalMessages = result.response?.messages;
+    if (!checked.issues.length) return {...result,text:result.text,finishReason:result.finishReason,usage,totalUsage:usage,steps,response:result.response};
+    if (policy.shouldContinue?.() === false || used >= maxCalls || checked.calls >= maxCalls || repair >= maxRepairs || result.finishReason === 'length' || !Array.isArray(originalMessages) || !originalMessages.length) {
+      return {...result,text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
+    }
+    messages = [...messages,...originalMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
+  }
+}
+module.exports = {inspectContinuation,generateWithContinuation,addUsage};

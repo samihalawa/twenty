@@ -30,6 +30,7 @@ const mockAi={
 };
 const overrides={
 '/opt/workflow-lazy-tools/schema-validation.cjs':require('./schema-validation.cjs'),
+'/opt/workflow-lazy-tools/workflow-continuation.cjs':require('./workflow-continuation.cjs'),
 'ai':mockAi,
 'twenty-shared/constants':{AUTO_SELECT_SMART_MODEL_ID:'auto'},
 'twenty-shared/utils':{isDefined:x=>x!=null,isNonEmptyArray:x=>Array.isArray(x)&&x.length>0,tipTapDocumentToMarkdown:()=>''},
@@ -693,6 +694,14 @@ await test('installed MIME parser verifies actual compiled Unicode draft and rej
  const out=await service.sendMessage(input,{id:'account',handle:'me@example.com'});assert.equal(sends,1);assert.equal(out.messageExternalId,'sent');
  await assert.rejects(service.sendMessage({...input,attachments:[{...input.attachments[0],content:Buffer.from('changed PDF bytes')}]},{id:'account',handle:'me@example.com'}),/differs from the reviewed/);
  assert.equal(sends,1);
+});
+await test('native app tool uses source-aware execution instead of stale built code',async()=>{
+ const patch=PATCHES.find(p=>p.path.endsWith('tool-executor.service.js'));
+ const ToolExecutor=moduleClass(patch.patched,'ToolExecutorService');
+ const service=Object.create(ToolExecutor.prototype);let input;
+ service.logicFunctionExecutorService={executeOneFromSource:async value=>{input=value;return {data:{sourceRevision:'new'},status:'SUCCESS'}}};
+ const result=await service.dispatchLogicFunction({logicFunctionId:'exact-function'},{mode:'READ_CASE',opportunityId:'case'},{workspaceId:'workspace'});
+ assert.equal(input.id,'exact-function');assert.equal(input.workspaceId,'workspace');assert.equal(input.payload.opportunityId,'case');assert.equal(result.result.sourceRevision,'new');
 });
 console.log(JSON.stringify({status:'PASS',tests:results.length,results,scope:'isolated VM tests of exact candidate source; no provider AI call or live mutation'}));
 
