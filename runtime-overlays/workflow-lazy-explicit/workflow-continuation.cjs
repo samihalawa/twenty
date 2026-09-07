@@ -1,5 +1,6 @@
 'use strict';
 const {isDeepStrictEqual} = require('node:util');
+const {verifySelectedCandidateReads}=require('./context-read-verification.cjs');
 // Mechanical tool-result contracts only. The same native model retains all judgment.
 function inspectContinuation(steps, text) {
   const calls = [];
@@ -18,6 +19,8 @@ function inspectContinuation(steps, text) {
   if(lastFailed && !calls.slice(calls.indexOf(lastFailed)+1).some(c=>c.ok && c.name===lastFailed.name) && !/STATUS\s*:\s*(?:TOOLING_BLOCKED|NEEDS_EVIDENCE)/.test(String(text))) issues.push('A native tool call failed or its arguments could not be parsed: '+String(lastFailed.name??lastFailed.nativeName)+'. Exact error: '+String(lastFailed.error??'missing successful tool result').slice(0,1600)+'. Use the learned schema, retry only an operation proven not executed, or report the exact tooling/evidence block.');
   for (const call of calls) if(call.ok && call.name==='app_crm_case_context' && call.output?.mode==='READ_CASE')pages.set(call.output.opportunityId,trackCoverage(pages.get(call.output.opportunityId),call.output));
   for(const [id,state] of pages)if(!state.complete)issues.push('Unread source pages for '+id+'. Continue exact native cursor without copying the machine fingerprint: '+JSON.stringify({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:id,cursor:state.next}}));
+  let finalObject;try{finalObject=JSON.parse(text);}catch{}
+  if(finalObject&&Object.hasOwn(finalObject,'sourceFingerprint'))for(const state of pages.values())if(state.complete)try{verifySelectedCandidateReads([...state.sections.values()],calls.map(c=>({...c,output:{result:c.output}})),finalObject.candidateDecisions);}catch(error){issues.push(error.message+': choose relevance for every indexed candidate and read every full selected thread before completing the structured response.');}
   const writes = calls.map((c, index) => ({...c,index})).filter(c => /^(update|create|upsert)_one_/.test(c.name));
   for (const write of writes.filter(c=>c.ok)) {
     const id = write.args?.id ?? write.output?.id ?? write.output?.records?.[0]?.id;
@@ -33,7 +36,8 @@ function inspectContinuation(steps, text) {
   return { issues, calls: calls.length };
 }
 function trackCoverage(prior,p) {
-  const state=prior?.fingerprint===p.fingerprint?prior:{fingerprint:p.fingerprint,ranges:[],terminalEnd:null};
+  const state=prior?.fingerprint===p.fingerprint?prior:{fingerprint:p.fingerprint,ranges:[],terminalEnd:null,sections:new Map()};
+  for(let i=0;i<(p.sections??[]).length;i++)state.sections.set(p.cursor+i,p.sections[i]);
   const end=p.nextCursor??p.totalSections??(p.cursor+(p.sections?.length??1));
   state.ranges.push([p.cursor,end]);if(p.hasNextPage===false)state.terminalEnd=end;
   let next=0;for(const [start,end] of state.ranges.slice().sort((a,b)=>a[0]-b[0])){if(start>next)break;if(end>next)next=end;}
@@ -56,6 +60,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   const steps = [];
   const casePages = new Map();
   const protectedEvidence = new Map();
+  const nativeCalls=[];
   const tools = Object.fromEntries(Object.entries(options.tools ?? {}).map(([name,tool]) => [name, !tool.execute ? tool : {...tool,execute:async (...args)=>{
     if (used >= maxCalls) throw new Error('NATIVE_TOOL_BUDGET_EXHAUSTED: preserve unfinished work for continuation');
     used++;
@@ -69,6 +74,9 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     if(actualName==='update_one_opportunity') {
       const context=casePages.get(actualArgs?.id);
       if(!context?.complete) throw new Error('CASE_CONTEXT_INCOMPLETE: mutation was not executed. Read every READ_CASE page for this exact opportunity before deciding or updating. '+JSON.stringify(context?.nextRead??{toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:actualArgs?.id}}));
+      let decisions=actualArgs.evidenceJSON?.candidateDecisions;
+      if(!decisions&&typeof actualArgs.stateEvidence?.markdown==='string')try{decisions=JSON.parse(actualArgs.stateEvidence.markdown).candidateDecisions;}catch{}
+      verifySelectedCandidateReads([...context.sections.values()],nativeCalls,decisions);
       if(actualArgs?.evidenceJSON!==undefined || actualArgs?.stateEvidence?.markdown!==undefined) {
         let evidence;
         try { evidence=actualArgs.evidenceJSON??JSON.parse(actualArgs.stateEvidence.markdown); } catch { throw new Error('INVALID_STATE_EVIDENCE_JSON: mutation was not executed. stateEvidence.markdown must contain valid JSON, without escaped outer quotes. Use the learned native input schema and JSON.stringify semantics.'); }
@@ -80,6 +88,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       }
     }
     const output=await tool.execute(...args), result=output?.result??output;
+    nativeCalls.push({name:actualName,args:actualArgs,output,ok:output?.success!==false&&!output?.error});
     if(actualName==='find_one_opportunity' && output?.success!==false) {
       const record=result?.records?.[0]??result;
       if(record?.id && typeof record.stateEvidence?.markdown==='string') try { const evidence=JSON.parse(record.stateEvidence.markdown); if(evidence && typeof evidence==='object' && !Array.isArray(evidence)) protectedEvidence.set(record.id,evidence); } catch { /* An invalid historical blob is not an invented structured admission. */ }

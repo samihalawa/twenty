@@ -107,3 +107,23 @@ test('native execution binds opaque fingerprint and evidence from exact read rec
  }}}},{enabled:true});
  assert.equal(second.cursor,2);
 });
+
+test('candidate index cannot authorize a mutation until exact selected bodies are read',async()=>{
+ const body='Exact current source',hash=require('node:crypto').createHash('sha256').update(body).digest('hex');
+ const manifest=JSON.stringify({id:'thread',messages:[{id:'message',bodyCharacters:body.length,bodySha256:hash}]});
+ const section={sourceType:'DETACHED_THREAD_CANDIDATE_CONTENT_NOT_READ',sourceId:'thread',offset:0,totalCharacters:manifest.length,text:manifest};let writes=0;
+ await generateWithContinuation(async opts=>{
+  const execute=opts.tools.execute_tool.execute;
+  await execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:0}});
+  await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:{}}}),/CANDIDATE_CONTEXT_DECISIONS_MISSING/);
+  const evidenceJSON={candidateDecisions:[{threadId:'thread',decision:'READ',reason:'Exact current request'}]};
+  await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON}}),/SELECTED_CONTEXT_READ_INCOMPLETE/);
+  await execute({toolName:'find_many_messages',arguments:{messageThreadId:{eq:'thread'},select:['id','messageThreadId','text'],offset:0,limit:5}});
+  await execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON}});
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{execute_tool:{execute:async input=>{
+  if(input.toolName==='update_one_opportunity'){writes++;return {success:true,result:{id:'case'}};}
+  if(input.toolName==='find_many_messages')return {success:true,result:{hasNextPage:false,records:[{id:'message',messageThreadId:'thread',text:body}]}};
+  return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor:0,nextCursor:null,hasNextPage:false,totalSections:1,fingerprint:'hash',sections:[section]}};
+ }}}},{enabled:true});assert.equal(writes,1);
+});

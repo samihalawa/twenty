@@ -16,10 +16,11 @@ function extendSchema(schema, objectName,z) {
 function prepare(objectName,args,current) {
   const field=fields[objectName];
   const custom=customFields[objectName];
-  if(!custom && (!field || args.evidenceJSON===undefined))return null;
+  if(!custom && (!field || (args.evidenceJSON===undefined&&args[field]===undefined)))return null;
   if(!args.expectedUpdatedAt || !current?.id || current.id!==args.id || (current.updatedAt instanceof Date?current.updatedAt.toISOString():current.updatedAt)!==args.expectedUpdatedAt)throw Error('EVIDENCE_REVISION_CONFLICT: read the current exact record and reconcile before retrying; no mutation executed.');
   if(args.evidenceJSON!==undefined && args[field]!==undefined)throw Error('Use evidenceJSON or '+field+', never both.');
-  const incoming=args.evidenceJSON;
+  let incoming=args.evidenceJSON;
+  if(incoming===undefined&&field&&args[field]!==undefined){try{incoming=JSON.parse(args[field].markdown);}catch{throw Error("INVALID_STATE_EVIDENCE_JSON: use structured evidenceJSON; no mutation executed.");}}
   if(incoming!==undefined && (!incoming || typeof incoming!=='object' || Array.isArray(incoming)))throw Error('evidenceJSON must be a JSON object.');
   let previous={};
   if(typeof current[field]?.markdown==='string')try {const parsed=JSON.parse(current[field].markdown);if(parsed && typeof parsed==='object'&&!Array.isArray(parsed))previous=parsed;} catch {} // Legacy malformed interpretation is replaced; no fictitious structure is invented.
@@ -31,7 +32,7 @@ function prepare(objectName,args,current) {
 }
 async function update(service,ref,args,context,authContext) {
   const field=fields[ref.objectNameSingular];
-  if(!customFields[ref.objectNameSingular] && (!field || args.evidenceJSON===undefined))return null;
+  if(!customFields[ref.objectNameSingular] && (!field || (args.evidenceJSON===undefined&&args[field]===undefined)))return null;
   const found=await service.findRecordsService.execute({objectName:ref.objectNameSingular,filter:{id:{eq:args.id}},limit:1,select:['id','updatedAt',...(field?[field]:[])],shouldBuildEffectiveSelectFields:true,authContext,rolePermissionConfig:context.rolePermissionConfig});
   if(found.success!==true) return found;
   const result=found.result, current=Array.isArray(result)?result[0]:result?.records?.[0];

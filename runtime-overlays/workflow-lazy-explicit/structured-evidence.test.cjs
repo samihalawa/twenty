@@ -33,3 +33,10 @@ test('synced calendar permits only exact opportunity link with revision CAS',()=
 test('native Date timestamp compares to exact API ISO revision without weakening CAS',()=>{
  assert.ok(prepare('opportunity',input,{...current,updatedAt:new Date(current.updatedAt)}));
 });
+
+test('raw markdown evidence cannot bypass protected merge and revision checks',()=>{
+ const prior={id:'x',updatedAt:'2026-09-07T00:00:00.000Z',stateEvidence:{markdown:JSON.stringify({admission:{id:'source'},manualPreparation:{id:'request'}})}};
+ assert.throws(()=>prepare('opportunity',{id:'x',stateEvidence:{markdown:'{}'}},prior),/REVISION_CONFLICT/);
+ const p=prepare('opportunity',{id:'x',expectedUpdatedAt:prior.updatedAt,stateEvidence:{markdown:JSON.stringify({judgment:'new'})}},prior);
+ const saved=JSON.parse(p.data.stateEvidence.markdown);assert.equal(saved.admission.id,'source');assert.equal(saved.manualPreparation.id,'request');assert.equal(saved.judgment,'new');
+});
