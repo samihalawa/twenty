@@ -108,6 +108,17 @@ await test('explicit workflow logic functions require admin configuration and bo
   }
  } finally {registry.buildToolIndex=prior;}
 });
+await test('case context runtime rejects legacy write modes and unexpected arguments before dispatch',async()=>{
+ const before=dispatches.length;
+ for(const args of [null,[],{}, {mode:'APPLY',opportunityId:'op'}, {mode:'READ_CASE',opportunityId:'op',apply:true}, {mode:'READ_CASE',payload:{mode:'WRITE'}}, {mode:'READ_CASE',userId:'spoof'}]){
+  const out=await registry.resolveAndExecute('app_crm_case_context',args,base);
+  assert.equal(out.success,false);assert.match(out.error,/read-only/);
+ }
+ assert.equal(dispatches.length,before);
+ const oldCatalog=registry.getCatalog;registry.getCatalog=async()=>[{name:'app_crm_case_context',category:'logic_function'}];
+ try {const out=await registry.resolveAndExecute('app_crm_case_context',{mode:'READ_CASE',opportunityId:'op',cursor:'cursor',fingerprint:'fingerprint'},base);assert.equal(out.success,true);assert.equal(dispatches.length,before+1);}
+ finally {registry.getCatalog=oldCatalog;}
+});
 await test('workflow oversized output is an explicit bounded failure with mutation ambiguity preserved',async()=>{
  const prior=registry.resolveAndExecute;
  registry.resolveAndExecute=async()=>({success:true,result:'x'.repeat(60000)});
@@ -542,7 +553,7 @@ await test('Gmail draft returns exact native IDs and independently fetched MIME 
  const Gmail=moduleClass(p.patched,'GmailMessageOutboundService',{'@sniptt/guards':{isNonEmptyString:x=>typeof x==='string'&&x.length>0},'node:crypto':require('node:crypto')});
  const service=new Gmail();let creates=0,gets=0,attachments=0;
  const nativeMessage={id:'m1',threadId:'t1',payload:{headers:[{name:'Subject',value:'Native subject'}],parts:[{filename:'CV.pdf',mimeType:'application/pdf',body:{attachmentId:'a1'}}]}};
- const client={users:{drafts:{create:async()=>{creates++;return {data:{id:'d1',message:{id:'m1',threadId:'t1'}}};},get:async args=>{gets++;assert.equal(args.id,'d1');assert.equal(args.format,'full');return {data:{id:'d1',message:nativeMessage}};}},messages:{attachments:{get:async args=>{attachments++;assert.equal(args.messageId,'m1');assert.equal(args.id,'a1');return {data:{data:Buffer.from('exact bytes').toString('base64url')}};}}}}};
+ const client={users:{threads:{get:async()=>({data:{id:'t1',messages:[nativeMessage]}})},drafts:{create:async()=>{creates++;return {data:{id:'d1',message:{id:'m1',threadId:'t1'}}};},get:async args=>{gets++;assert.equal(args.id,'d1');assert.equal(args.format,'full');return {data:{id:'d1',message:nativeMessage}};}},messages:{attachments:{get:async args=>{attachments++;assert.equal(args.messageId,'m1');assert.equal(args.id,'a1');return {data:{data:Buffer.from('exact bytes').toString('base64url')}};}}}}};
  service.composeGmailMessage=async()=>({gmailClient:client,encodedMessage:'encoded'});
  const out=await service.createDraft({},{});
  assert.equal(creates,1);assert.equal(gets,1);assert.equal(attachments,1);assert.equal(out.readBackConfirmed,true);assert.equal(out.nativeMessage,nativeMessage);
@@ -578,10 +589,10 @@ await test('native email tool preserves Sent proof independently from echoed inp
 });
 function draftFixture(){
  const p=PATCHES.find(x=>x.path.endsWith('gmail-message-outbound.service.js'));
- const calls=[];let edited=false,missing=false,sentMode='valid';
+ const calls=[];let edited=false,missing=false,sentMode='valid',contextMessages=[];
  const message={id:'m1',threadId:'t1',payload:{headers:[],body:{data:''}}};
  const parsed={from:{address:'me@example.com'},to:[{address:'to@example.com'}],cc:[],bcc:[],subject:'subject',text:'body',html:'<p>body</p>',messageId:'<message>',attachments:[]};
- const client={users:{drafts:{
+ const client={users:{threads:{get:async()=>{calls.push(['thread-read']);return {data:{id:'t1',messages:[message,...contextMessages]}};}},drafts:{
  get:async args=>{calls.push(['get',args]);if(missing)throw Error('404');return {data:{id:args.id,message:args.format==='raw'?{...message,raw:Buffer.from('raw').toString('base64url')}:message}};},
  create:async args=>{calls.push(['create',args]);throw Error('CREATE must not run');},
  update:async args=>{calls.push(['update',args]);return {data:{id:args.id,message}};},
@@ -589,16 +600,16 @@ function draftFixture(){
  },messages:{get:async args=>{calls.push(['sent-read',args]);if(sentMode==='timeout')throw Error('read timeout');return {data:{...message,id:sentMode==='identity'?'other':'sent-id',labelIds:sentMode==='label'?[]:['SENT'],payload:{headers:[],parts:[{filename:'proof.pdf',mimeType:'application/pdf',body:{attachmentId:'a1'}}]}}};},attachments:{get:async args=>{calls.push(['sent-attachment',args]);return {data:sentMode==='bytes'?{}:{data:Buffer.from('sent bytes').toString('base64url')}};}}}}};
  const Gmail=moduleClass(p.patched,'GmailMessageOutboundService',{'googleapis':{google:{gmail:()=>client}},'@sniptt/guards':{isNonEmptyString:x=>!!x},'postal-mime':{parse:async()=>({...parsed,subject:edited?'edited':parsed.subject})},'node:crypto':require('node:crypto')});
  const service=new Gmail();service.googleOAuth2ClientProvider={getClient:async()=>({})};service.composeGmailMessage=async()=>({gmailClient:client,encodedMessage:'reviewed'});
- const input={providerDraftId:'d1',to:['to@example.com'],cc:[],bcc:[],subject:'subject',body:'body',html:'<p>body</p>',threadExternalId:'t1',attachments:[]};
- return {service,calls,input,account:{id:'account',handle:'me@example.com'},edit:()=>{edited=true;},missing:()=>{missing=true;},sentMode:mode=>{sentMode=mode;}};
+ const input={providerDraftId:'d1',approvedThreadContextFingerprint:require('node:crypto').createHash('sha256').update('[]').digest('hex'),to:['to@example.com'],cc:[],bcc:[],subject:'subject',body:'body',html:'<p>body</p>',threadExternalId:'t1',attachments:[]};
+ return {service,calls,input,account:{id:'account',handle:'me@example.com'},edit:()=>{edited=true;},missing:()=>{missing=true;},sentMode:mode=>{sentMode=mode;},context:messages=>{contextMessages=messages;}};
 }
 await test('READ performs no provider writes and returns exact provider evidence',async()=>{
  const f=draftFixture();const out=await f.service.createDraft({draftOperation:'READ',draftId:'d1'},f.account);
- assert.equal(out.readBackConfirmed,true);assert.equal(out.draftId,'d1');assert.deepEqual(f.calls.map(x=>x[0]),['get']);
+ assert.equal(out.readBackConfirmed,true);assert.equal(out.draftId,'d1');assert.deepEqual(f.calls.map(x=>x[0]),['get','thread-read']);
 });
 await test('UPSERT updates exact draft ID and performs no create',async()=>{
  const f=draftFixture();const out=await f.service.createDraft({draftOperation:'UPSERT',draftId:'d1'},f.account);
- assert.equal(out.readBackConfirmed,true);assert.equal(out.draftId,'d1');assert.deepEqual(f.calls.map(x=>x[0]),['get','update','get']);
+ assert.equal(out.readBackConfirmed,true);assert.equal(out.draftId,'d1');assert.deepEqual(f.calls.map(x=>x[0]),['get','update','get','thread-read']);
  assert.equal(f.calls[1][1].id,'d1');assert.equal(f.calls[1][1].requestBody.id,'d1');
 });
 await test('unknown draft cannot fall back to create or new send',async()=>{
@@ -612,7 +623,7 @@ await test('unknown draft cannot fall back to create or new send',async()=>{
 });
 await test('exact reviewed draft is consumed once and preserves native sent receipt',async()=>{
  const f=draftFixture();const out=await f.service.sendMessage(f.input,f.account);
- assert.deepEqual(f.calls.map(x=>x[0]),['get','send','sent-read','sent-attachment']);assert.equal(f.calls[1][1].requestBody.id,'d1');
+ assert.deepEqual(f.calls.map(x=>x[0]),['get','thread-read','send','sent-read','sent-attachment']);assert.equal(f.calls[2][1].requestBody.id,'d1');
  assert.equal(out.messageExternalId,'sent-id');assert.equal(out.threadExternalId,'t1');assert.equal(out.headerMessageId,'<message>');
 });
 await test('Sent proof uses independently fetched MIME, SENT label and downloaded attachment bytes',async()=>{
@@ -620,8 +631,8 @@ await test('Sent proof uses independently fetched MIME, SENT label and downloade
  assert.equal(out.nativeSent.readBackConfirmed,true);assert.equal(out.nativeSent.messageId,'sent-id');
  assert.equal(out.nativeSent.nativeMessage.labelIds[0],'SENT');
  assert.equal(out.nativeSent.attachmentManifest[0].sha256,require('node:crypto').createHash('sha256').update('sent bytes').digest('hex'));
- assert.equal(f.calls[2][1].id,'sent-id');assert.equal(f.calls[2][1].format,'full');
- assert.equal(f.calls[3][1].messageId,'sent-id');assert.equal(f.calls[3][1].id,'a1');
+ assert.equal(f.calls[3][1].id,'sent-id');assert.equal(f.calls[3][1].format,'full');
+ assert.equal(f.calls[4][1].messageId,'sent-id');assert.equal(f.calls[4][1].id,'a1');
 });
 await test('Sent read-back timeout, identity, label and missing bytes never repeat the successful send',async()=>{
  for(const mode of ['timeout','identity','label','bytes']){
@@ -633,6 +644,26 @@ await test('Sent read-back timeout, identity, label and missing bytes never repe
 await test('missing send receipt fails proof without inventing a Sent ID or retrying',async()=>{
  const f=draftFixture();const out=await f.service.readSentEvidence({},undefined,undefined);
  assert.equal(out.readBackConfirmed,false);assert.equal(out.messageId,null);assert(out.error);assert.equal(f.calls.length,0);
+});
+await test('new native reply or Sent activity blocks dispatch even before CRM sync',async()=>{
+ for(const labelIds of [['INBOX'],['SENT'],['DRAFT']]){
+  const f=draftFixture();f.context([{id:'new-message',threadId:'t1',internalDate:'123',labelIds,payload:{headers:[],body:{data:'new'}}}]);
+  await assert.rejects(f.service.sendMessage(f.input,f.account),/thread changed since approval/);
+  assert.equal(f.calls.filter(x=>x[0]==='send').length,0);
+ }
+});
+await test('absent approved thread fingerprint blocks exact draft send',async()=>{
+ const f=draftFixture();delete f.input.approvedThreadContextFingerprint;
+ await assert.rejects(f.service.sendMessage(f.input,f.account),/fingerprint required/);assert.equal(f.calls.filter(x=>x[0]==='send').length,0);
+});
+await test('thread fingerprint ignores ephemeral labels and catches body changes',async()=>{
+ const f=draftFixture();const source={id:'prior',threadId:'t1',internalDate:'1',payload:{headers:[{name:'Subject',value:'Original'}],body:{data:'original'}}};
+ f.context([{...source,labelIds:['INBOX']}]);const first=await f.service.createDraft({draftOperation:'READ',draftId:'d1'},f.account);
+ assert.equal(first.readBackConfirmed,true);assert(first.threadContextFingerprint);
+ f.context([{...source,labelIds:['UNREAD','INBOX']}]);const second=await f.service.createDraft({draftOperation:'READ',draftId:'d1'},f.account);
+ assert.equal(first.threadContextFingerprint,second.threadContextFingerprint);
+ f.context([{...source,payload:{...source.payload,body:{data:'changed'}}}]);const third=await f.service.createDraft({draftOperation:'READ',draftId:'d1'},f.account);
+ assert.notEqual(first.threadContextFingerprint,third.threadContextFingerprint);
 });
 await test('provider edit after approval blocks exact draft send before mutation',async()=>{
  const f=draftFixture();f.edit();await assert.rejects(f.service.sendMessage(f.input,f.account),/differs from the reviewed/);
@@ -653,10 +684,10 @@ await test('installed MIME parser verifies actual compiled Unicode draft and rej
  const runtimeRequire=require('node:module').createRequire('/app/packages/twenty-server/package.json');
  const MailComposer=runtimeRequire('nodemailer/lib/mail-composer');
  const p=PATCHES.find(x=>x.path.endsWith('gmail-message-outbound.service.js'));
- const input={providerDraftId:'d1',to:['to@example.com'],cc:[],bcc:[],subject:'Revisión exacta',body:'Texto íntegro',html:'<p>Texto íntegro</p>',attachments:[{filename:'CV.pdf',contentType:'application/pdf',content:Buffer.from('original PDF bytes')}]};
+ const input={providerDraftId:'d1',approvedThreadContextFingerprint:require('node:crypto').createHash('sha256').update('[]').digest('hex'),to:['to@example.com'],cc:[],bcc:[],subject:'Revisión exacta',body:'Texto íntegro',html:'<p>Texto íntegro</p>',attachments:[{filename:'CV.pdf',contentType:'application/pdf',content:Buffer.from('original PDF bytes')}]};
  const raw=await new MailComposer({from:'me@example.com',to:input.to,subject:input.subject,text:input.body,html:input.html,attachments:input.attachments}).compile().build();
  let sends=0;
- const client={users:{drafts:{get:async()=>({data:{id:'d1',message:{id:'m1',raw:raw.toString('base64url')}}}),send:async()=>{sends++;return {data:{id:'sent'}};}}}};
+ const client={users:{threads:{get:async()=>({data:{id:'t1',messages:[]}})},drafts:{get:async()=>({data:{id:'d1',message:{id:'m1',threadId:'t1',raw:raw.toString('base64url')}}}),send:async()=>{sends++;return {data:{id:'sent'}};}}}};
  const Gmail=moduleClass(p.patched,'GmailMessageOutboundService',{'googleapis':{google:{gmail:()=>client}},'postal-mime':runtimeRequire('postal-mime'),'node:crypto':require('node:crypto')});
  const service=new Gmail();service.googleOAuth2ClientProvider={getClient:async()=>({})};
  const out=await service.sendMessage(input,{id:'account',handle:'me@example.com'});assert.equal(sends,1);assert.equal(out.messageExternalId,'sent');
