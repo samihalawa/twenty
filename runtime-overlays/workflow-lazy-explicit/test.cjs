@@ -493,6 +493,7 @@ for(const [suffix,className,guard]of [['logic-function/logic-function.workflow-a
  await test(className+' uses source-aware executor exactly once with exact identity and payload',async()=>{
  const p=PATCHES.find(x=>x.path.endsWith(suffix));let calls=0,logs=0;
  const Action=moduleClass(p.patched,className,{
+ '/opt/workflow-lazy-tools/native-preparation.cjs':require('./native-preparation.cjs'),
  '@nestjs/common':{Injectable:()=>x=>x,Logger:class{warn(){}}},
  'twenty-shared/utils':{resolveInput:x=>x,isDefined:x=>x!=null},
  '../../utils/find-step-or-throw.util':{findStepOrThrow:({steps})=>steps[0]},

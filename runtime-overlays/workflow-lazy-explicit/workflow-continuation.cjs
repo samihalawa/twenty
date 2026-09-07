@@ -59,6 +59,18 @@ function addUsage(a = {}, b = {}) {
   }
   return out;
 }
+function nativeResponseMessages(steps, text) {
+  const messages=[];
+  for(const step of steps){
+    const content=step.content?.length?step.content:[...(step.toolCalls??[]).map(p=>({...p,type:'tool-call'})),...(step.toolResults??[]).map(p=>({...p,type:p.type??'tool-result'}))];
+    const assistant=content.filter(p=>['text','reasoning','tool-call'].includes(p.type)).map(p=>p.type==='tool-call'?{type:'tool-call',toolCallId:p.toolCallId,toolName:p.toolName,input:p.input??p.args}:p);
+    if(assistant.length)messages.push({role:'assistant',content:assistant});
+    const results=content.filter(p=>p.type==='tool-result'||p.type==='tool-error').map(p=>({type:'tool-result',toolCallId:p.toolCallId,toolName:p.toolName??content.find(c=>c.type==='tool-call'&&c.toolCallId===p.toolCallId)?.toolName,output:p.type==='tool-error'?{type:'error-text',value:String(p.error??p.output)}:{type:'json',value:p.output??p.result}}));
+    if(results.length)messages.push({role:'tool',content:results});
+  }
+  if(typeof text==='string'&&text.trim())messages.push({role:'assistant',content:text});
+  return messages;
+}
 async function generateWithContinuation(generateText, options, policy = {}) {
   if (!policy.enabled) return generateText(options);
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
@@ -128,12 +140,13 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     usage = addUsage(usage,result.totalUsage ?? result.usage);
     const checked = inspectContinuation(steps,result.text);
     if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
-    const originalMessages = result.response?.messages ?? (result.nativeValidationError ? [{role:'assistant',content:result.text}] : undefined);
+    const originalMessages = result.response?.messages?.length ? result.response.messages : nativeResponseMessages(roundSteps.length?roundSteps:observedSteps,result.text);
     if (!checked.issues.length) return {...result,text:result.text,finishReason:result.finishReason,usage,totalUsage:usage,steps,response:result.response};
-    if (policy.shouldContinue?.() === false || used >= maxCalls || checked.calls >= maxCalls || repair >= maxRepairs || result.finishReason === 'length' || !Array.isArray(originalMessages) || !originalMessages.length) {
-      return {...result,text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
+    const stopReason=policy.shouldContinue?.()===false?'CREDITS_UNAVAILABLE':used>=maxCalls||checked.calls>=maxCalls?'TOOL_BUDGET_EXHAUSTED':repair>=maxRepairs?'REPAIR_LIMIT_REACHED':result.finishReason==='length'?'OUTPUT_BUDGET_EXHAUSTED':!originalMessages.length?'NATIVE_HISTORY_UNAVAILABLE':null;
+    if (stopReason) {
+      return {...result,text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
     }
     messages = [...messages,...originalMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages};

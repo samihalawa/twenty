@@ -132,3 +132,15 @@ test('false NO_WORK after complete case reads is fed back through the independen
  const checked=inspectContinuation([page(0,null)],'STATUS: NO_WORK\nMISSING_EVIDENCE:none');
  assert.ok(checked.issues.some(x=>x.includes('NO_WORK has no bounded source search')));
 });
+
+test('structured parse recovery without SDK messages retains actual native tool history and continues',async()=>{
+ let rounds=0;const first=page(0,2);first.response={id:'provider-response'};
+ const result=await generateWithContinuation(async options=>{
+  if(++rounds===1){await options.onStepFinish(first);throw Error('parsed response missing SDK messages');}
+  const replay=options.messages.find(m=>m.role==='tool');
+  assert.equal(replay.content[0].output.type,'json');assert.equal(replay.content[0].output.value.result.cursor,0);
+  assert.equal(options.messages.find(m=>m.role==='assistant').content[0].toolCallId,first.toolCalls[0].toolCallId);
+  return receipt([page(2,null)],'{"status":"NEEDS_EVIDENCE"}');
+ },{tools:{},messages:[{role:'user',content:'case'}]},{enabled:true,recoverError:(_error,steps)=>({steps,text:'{"status":"TOOLING_BLOCKED"}',finishReason:'stop',usage:{outputTokens:12}})});
+ assert.equal(rounds,2);assert.equal(result.steps.length,2);
+});
