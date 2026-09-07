@@ -477,7 +477,7 @@ specs.find(x=>x.path.endsWith('workflow.mjs')).changes.push(["providerDraftId: d
 // Keep the native model conversation alive only for mechanically unfulfilled tool contracts.
 specs.find(x=>x.path.endsWith('agent-async-executor.service.js')).changes.push(
   ["            const textResponse = await (0, _ai.generateText)({", "            const textResponse = await require('/opt/workflow-lazy-tools/workflow-continuation.cjs').generateWithContinuation(_ai.generateText, {"],
-  ["            }).catch(error => {", "            }, {enabled: toolLoadingStrategy === 'lazy-workflow-explicit' && agent?.modelConfiguration?.workflowReadOnlyToolNames?.includes('app_crm_case_context'), maxToolCalls: 40, shouldContinue: () => !hasNoMoreAvailableCredits, recoverError: (error, steps) => require('/opt/workflow-lazy-tools/schema-validation.cjs').recoverStructuredParse(error, validateResponse, _ai.NoObjectGeneratedError?.isInstance(error) === true, steps)}).catch(error => {"]
+  ["            }).catch(error => {", "            }, {enabled: toolLoadingStrategy === 'lazy-workflow-explicit' && agent?.modelConfiguration?.workflowReadOnlyToolNames?.includes('app_crm_case_context'), maxToolCalls: 40, shouldContinue: () => !hasNoMoreAvailableCredits, recoverError: (error, steps) => require('/opt/workflow-lazy-tools/schema-validation.cjs').recoverStructuredParse(error, validateResponse, _ai.NoObjectGeneratedError?.isInstance(error) === true, steps, true)}).catch(error => {"]
 );
 
 // Native app tools must build edited source just like native code/workflow actions.
@@ -490,6 +490,18 @@ specs.push({
     ['typeof _logicfunctionexecutorservice.LogicFunctionExecutorService === "undefined" ? Object : _logicfunctionexecutorservice.LogicFunctionExecutorService','typeof _logicfunctionexecutorservice.LogicFunctionFromSourceService === "undefined" ? Object : _logicfunctionexecutorservice.LogicFunctionFromSourceService']
   ]
 });
+
+// Structured internal evidence travels as JSON once; existing native CRUD remains the authority.
+specs.push({path:'engine/core-modules/record-crud/utils/generate-update-record-input-schema.util.js',sha256:'ea0d6fd8c08015d899a1a922eb512ad1fd4190194a3dc878bdd745b8407efb3e',changes:[
+ ['    return recordPropertiesSchema.partial().extend({','    const schema = recordPropertiesSchema.partial().extend({'],
+ ['    });\n};','    });\n    return require("/opt/workflow-lazy-tools/structured-evidence.cjs").extendSchema(schema, objectMetadata.nameSingular, _zod.z);\n};']
+]});
+specs.find(x=>x.path.endsWith('tool-executor.service.js')).changes.push([
+ "            case 'update_one':\n                {\n                    const { id, ...fields } = args;",
+ "            case 'update_one':\n                {\n                    const structured = await require('/opt/workflow-lazy-tools/structured-evidence.cjs').update(this, ref, args, context, authContext);\n                    if (structured !== null) return structured;\n                    const { id, expectedUpdatedAt, evidenceJSON, ...fields } = args;"
+]);
+
+specs.push(...[{"path": "engine/core-modules/tool-provider/providers/database-tool.provider.js", "sha256": "01d53310329f3b8d97764c78042e5e4802819a7f9f23e2474d8c0ee78c08de2b", "changes": [["            if (canUpdateRecords && canBeManagedByAutomation) {", "            if (canUpdateRecords && (canBeManagedByAutomation || ['messageThread','calendarEvent'].includes(objectMetadata.nameSingular))) {"], ["        return descriptors;\n    }\n    hasMatchingTool", "        return descriptors.filter(d => !['messageThread','calendarEvent'].includes(d.objectName) || ['find_one','find_many','group_by','update_one'].includes(d.operation));\n    }\n    hasMatchingTool"]]}, {"path": "engine/core-modules/record-crud/services/update-many-records.service.js", "sha256": "56485b49823c9d789f81ddfda8febb82ef9790f8138f7c64aa6d7ce3592d7d62", "changes": [["            if (!(0, _workflow.canObjectBeManagedByAutomation)({\n                nameSingular: flatObjectMetadata.nameSingular\n            })) {", "            if (!(0, _workflow.canObjectBeManagedByAutomation)({\n                nameSingular: flatObjectMetadata.nameSingular\n            }) && !(params.customFieldsOnly === true && require('/opt/workflow-lazy-tools/structured-evidence.cjs').isCustomOnly(objectName, data))) {"]]}]);
 
 function preparePatches() {
   return specs.map(spec => {

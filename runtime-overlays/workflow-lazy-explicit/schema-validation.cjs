@@ -46,12 +46,16 @@ function describeExecutionError(error) {
   return message + (details.size ? ' [' + [...details].join('; ') + ']' : '');
 }
 
-function recoverStructuredParse(error, validate, isNoObjectError, steps = []) {
+function recoverStructuredParse(error, validate, isNoObjectError, steps = [], allowRepair = false) {
   if (!isNoObjectError || !validate || error.finishReason === 'length' ||
       typeof error.text !== 'string' || Buffer.byteLength(error.text, 'utf8') > 262144) throw error;
   let checked;
-  try { checked = parseValidatedResponse(error.text, validate); } catch { throw error; }
-  if (!checked?.success) throw error;
+  let validationError;
+  try { checked = parseValidatedResponse(error.text, validate); } catch (problem) { validationError=problem.message; }
+  if (!checked?.success) {
+    if(!allowRepair)throw error;
+    return {text:error.text,usage:error.usage,finishReason:error.finishReason,steps,nativeValidationError:validationError??'The final response must be valid JSON matching the configured response schema.'};
+  }
   return {text: error.text, usage: error.usage, finishReason: error.finishReason, steps};
 }
 

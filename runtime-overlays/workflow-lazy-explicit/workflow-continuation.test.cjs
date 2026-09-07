@@ -77,3 +77,13 @@ test('only exact registered tool with known malformed channel suffix is repaired
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{execute_tool:{execute:async()=>({})}}},{enabled:true});
 });
+test('invalid final structured output receives bounded same-model repair with real steps',async()=>{
+ let rounds=0;const first=page(0,null);first.response={messages:[{role:'assistant',content:'actual case read'},{role:'tool',content:'all native pages'}]};
+ const result=await generateWithContinuation(async options=>{
+  if(++rounds===1){await options.onStepFinish(first);throw Error('invalid final JSON');}
+  assert.match(options.messages.at(-1).content,/Final response validation failed/);
+  assert.deepEqual(options.messages.slice(1,3),first.response.messages);
+  return receipt([],'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: exact external assessment completion');
+ },{tools:{},messages:[{role:'user',content:'task'}]},{enabled:true,recoverError:(error,steps)=>({...receipt(steps,'{"status":'),nativeValidationError:'unexpected end'})});
+ assert.equal(rounds,2);assert.equal(result.steps.length,1);
+});

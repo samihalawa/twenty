@@ -10,10 +10,12 @@ function inspectContinuation(steps, text) {
       const name = c.toolName === 'execute_tool' ? raw?.toolName : c.toolName;
       const args = c.toolName === 'execute_tool' ? raw?.arguments : raw;
       const output = r?.output ?? r?.result;
-      calls.push({ name, args, output: output?.result ?? output, ok: !!r && r.type !== 'tool-error' && !r.error && output?.success !== false && !output?.error });
+      calls.push({ nativeName:c.toolName, error:r?.error??output?.error??(r?.type==='tool-error'?r.output:undefined), name, args, output: output?.result ?? output, ok: !!r && r.type !== 'tool-error' && !r.error && output?.success !== false && !output?.error });
     }
   }
   const issues = [], pages = new Map();
+  const lastFailed=calls.findLast(c=>!c.ok);
+  if(lastFailed && !calls.slice(calls.indexOf(lastFailed)+1).some(c=>c.ok && c.name===lastFailed.name) && !/STATUS\s*:\s*(?:TOOLING_BLOCKED|NEEDS_EVIDENCE)/.test(String(text))) issues.push('A native tool call failed or its arguments could not be parsed: '+String(lastFailed.name??lastFailed.nativeName)+'. Exact error: '+String(lastFailed.error??'missing successful tool result').slice(0,1600)+'. Use the learned schema, retry only an operation proven not executed, or report the exact tooling/evidence block.');
   for (const call of calls) if (call.ok && call.name === 'app_crm_case_context' && call.output?.mode === 'READ_CASE') {
     const p = call.output, prior = pages.get(p.opportunityId);
     if (p.cursor === 0) pages.set(p.opportunityId, { fingerprint: p.fingerprint, next: p.nextCursor, complete: p.hasNextPage === false, page: p });
@@ -56,13 +58,13 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     if(actualName==='update_one_opportunity') {
       const context=casePages.get(actualArgs?.id);
       if(!context?.complete) throw new Error('CASE_CONTEXT_INCOMPLETE: mutation was not executed. Read every READ_CASE page for this exact opportunity before deciding or updating. '+JSON.stringify(context?.nextRead??{toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:actualArgs?.id}}));
-      if(actualArgs?.stateEvidence?.markdown!==undefined) {
+      if(actualArgs?.evidenceJSON!==undefined || actualArgs?.stateEvidence?.markdown!==undefined) {
         let evidence;
-        try { evidence=JSON.parse(actualArgs.stateEvidence.markdown); } catch { throw new Error('INVALID_STATE_EVIDENCE_JSON: mutation was not executed. stateEvidence.markdown must contain valid JSON, without escaped outer quotes. Use the learned native input schema and JSON.stringify semantics.'); }
+        try { evidence=actualArgs.evidenceJSON??JSON.parse(actualArgs.stateEvidence.markdown); } catch { throw new Error('INVALID_STATE_EVIDENCE_JSON: mutation was not executed. stateEvidence.markdown must contain valid JSON, without escaped outer quotes. Use the learned native input schema and JSON.stringify semantics.'); }
         if(!evidence || typeof evidence!=='object' || Array.isArray(evidence)) throw new Error('INVALID_STATE_EVIDENCE_JSON: evidence must be a JSON object. Mutation was not executed.');
         if(evidence.sourceCoverage?.complete===true && evidence.sourceCoverage.fingerprint!==context.fingerprint) throw new Error('STATE_EVIDENCE_FINGERPRINT_MISMATCH: mutation was not executed. Bind sourceCoverage to the exact fully read READ_CASE fingerprint.');
         const prior=protectedEvidence.get(actualArgs.id);
-        for(const key of ['manualPreparation','admission']) if(prior?.[key]!==undefined && !isDeepStrictEqual(evidence[key],prior[key])) throw new Error('STATE_EVIDENCE_PRESERVATION_REQUIRED: mutation was not executed. Preserve the exact existing '+key+' object from the native opportunity read-back.');
+        for(const key of ['manualPreparation','admission']) if(prior?.[key]!==undefined && evidence[key]!==undefined && !isDeepStrictEqual(evidence[key],prior[key])) throw new Error('STATE_EVIDENCE_PRESERVATION_REQUIRED: mutation was not executed. Preserve the exact existing '+key+' object from the native opportunity read-back.');
       }
     }
     const output=await tool.execute(...args), result=output?.result??output;
@@ -96,7 +98,8 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     steps.push(...roundSteps);
     usage = addUsage(usage,result.totalUsage ?? result.usage);
     const checked = inspectContinuation(steps,result.text);
-    const originalMessages = result.response?.messages;
+    if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
+    const originalMessages = result.response?.messages ?? (result.nativeValidationError ? [{role:'assistant',content:result.text}] : undefined);
     if (!checked.issues.length) return {...result,text:result.text,finishReason:result.finishReason,usage,totalUsage:usage,steps,response:result.response};
     if (policy.shouldContinue?.() === false || used >= maxCalls || checked.calls >= maxCalls || repair >= maxRepairs || result.finishReason === 'length' || !Array.isArray(originalMessages) || !originalMessages.length) {
       return {...result,text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
