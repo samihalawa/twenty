@@ -87,3 +87,23 @@ test('invalid final structured output receives bounded same-model repair with re
  },{tools:{},messages:[{role:'user',content:'task'}]},{enabled:true,recoverError:(error,steps)=>({...receipt(steps,'{"status":'),nativeValidationError:'unexpected end'})});
  assert.equal(rounds,2);assert.equal(result.steps.length,1);
 });
+test('repeated cursor0 preserves already read pages for identical source fingerprint',()=>{
+ const s=[page(0,2),page(2,4),page(0,2),page(4,null)];
+ assert.deepEqual(inspectContinuation(s,'STATUS: NEEDS_EVIDENCE').issues,[]);
+});
+test('native execution binds opaque fingerprint and evidence from exact read receipts',async()=>{
+ let second;
+ await generateWithContinuation(async opts=>{
+  const execute=opts.tools.execute_tool.execute;
+  const a=await execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:0}});
+  assert.equal(a.result.nextRead.arguments.fingerprint,undefined);
+  await execute(a.result.nextRead);
+  await execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:{sourceCoverage:{complete:true}}}});
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{execute_tool:{execute:async input=>{
+  if(input.toolName==='update_one_opportunity'){assert.equal(input.arguments.evidenceJSON.sourceCoverage.fingerprint,'full-native-fingerprint');return {success:true,result:{id:'case'}};}
+  const cursor=input.arguments.cursor;if(cursor>0){second=input.arguments;assert.equal(second.fingerprint,'full-native-fingerprint');}
+  return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor,nextCursor:cursor===0?2:null,hasNextPage:cursor===0,totalSections:4,fingerprint:'full-native-fingerprint'}};
+ }}}},{enabled:true});
+ assert.equal(second.cursor,2);
+});

@@ -16,12 +16,8 @@ function inspectContinuation(steps, text) {
   const issues = [], pages = new Map();
   const lastFailed=calls.findLast(c=>!c.ok);
   if(lastFailed && !calls.slice(calls.indexOf(lastFailed)+1).some(c=>c.ok && c.name===lastFailed.name) && !/STATUS\s*:\s*(?:TOOLING_BLOCKED|NEEDS_EVIDENCE)/.test(String(text))) issues.push('A native tool call failed or its arguments could not be parsed: '+String(lastFailed.name??lastFailed.nativeName)+'. Exact error: '+String(lastFailed.error??'missing successful tool result').slice(0,1600)+'. Use the learned schema, retry only an operation proven not executed, or report the exact tooling/evidence block.');
-  for (const call of calls) if (call.ok && call.name === 'app_crm_case_context' && call.output?.mode === 'READ_CASE') {
-    const p = call.output, prior = pages.get(p.opportunityId);
-    if (p.cursor === 0) pages.set(p.opportunityId, { fingerprint: p.fingerprint, next: p.nextCursor, complete: p.hasNextPage === false, page: p });
-    else if (prior && prior.fingerprint === p.fingerprint && prior.next === p.cursor) pages.set(p.opportunityId, { fingerprint: p.fingerprint, next: p.nextCursor, complete: p.hasNextPage === false, page: p });
-  }
-  for (const [id, state] of pages) if (!state.complete) issues.push('Unread source pages for ' + id + '. Continue the exact next tool call: ' + JSON.stringify(state.page.nextRead ?? {toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:id,cursor:state.next,fingerprint:state.fingerprint}}));
+  for (const call of calls) if(call.ok && call.name==='app_crm_case_context' && call.output?.mode==='READ_CASE')pages.set(call.output.opportunityId,trackCoverage(pages.get(call.output.opportunityId),call.output));
+  for(const [id,state] of pages)if(!state.complete)issues.push('Unread source pages for '+id+'. Continue exact native cursor without copying the machine fingerprint: '+JSON.stringify({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:id,cursor:state.next}}));
   const writes = calls.map((c, index) => ({...c,index})).filter(c => /^(update|create|upsert)_one_/.test(c.name));
   for (const write of writes.filter(c=>c.ok)) {
     const id = write.args?.id ?? write.output?.id ?? write.output?.records?.[0]?.id;
@@ -35,6 +31,15 @@ function inspectContinuation(steps, text) {
   const report=String(text).replace(/\*\*/g,'');
   if(/STATUS\s*:\s*NEEDS_EVIDENCE\b/.test(report) && /MISSING_EVIDENCE\s*:\s*(?:none|nothing|no missing evidence)\b/i.test(report)) issues.push('NEEDS_EVIDENCE contradicts MISSING_EVIDENCE:none. An unread or unavailable source must be identified for that status. If coverage is complete, finish the supported reconciliation and read it back; waiting for another person is a business state to record, not an evidence gap.');
   return { issues, calls: calls.length };
+}
+function trackCoverage(prior,p) {
+  const state=prior?.fingerprint===p.fingerprint?prior:{fingerprint:p.fingerprint,ranges:[],terminalEnd:null};
+  const end=p.nextCursor??p.totalSections??(p.cursor+(p.sections?.length??1));
+  state.ranges.push([p.cursor,end]);if(p.hasNextPage===false)state.terminalEnd=end;
+  let next=0;for(const [start,end] of state.ranges.slice().sort((a,b)=>a[0]-b[0])){if(start>next)break;if(end>next)next=end;}
+  state.next=next;state.complete=state.terminalEnd!==null&&next===state.terminalEnd;
+  state.nextRead={toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:p.opportunityId,cursor:next}};
+  return state;
 }
 function addUsage(a = {}, b = {}) {
   const out = {...a};
@@ -55,6 +60,12 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     if (used >= maxCalls) throw new Error('NATIVE_TOOL_BUDGET_EXHAUSTED: preserve unfinished work for continuation');
     used++;
     const input=args[0], actualName=name==='execute_tool'?input?.toolName:name, actualArgs=name==='execute_tool'?input?.arguments:input;
+    if(actualName==='app_crm_case_context' && Number(actualArgs?.cursor??0)>0) {
+      const bound=casePages.get(actualArgs.opportunityId);
+      if(!bound)throw Error('CASE_SNAPSHOT_NOT_BOUND: first read cursor0 for this exact case in this native execution.');
+      if(actualArgs.fingerprint!==undefined && actualArgs.fingerprint!==bound.fingerprint)throw Error('CASE_SNAPSHOT_BINDING_MISMATCH: the copied fingerprint is invalid; omit fingerprint and use the exact next cursor from the last native result. Existing successfully read pages remain available.');
+      actualArgs.fingerprint=bound.fingerprint;
+    }
     if(actualName==='update_one_opportunity') {
       const context=casePages.get(actualArgs?.id);
       if(!context?.complete) throw new Error('CASE_CONTEXT_INCOMPLETE: mutation was not executed. Read every READ_CASE page for this exact opportunity before deciding or updating. '+JSON.stringify(context?.nextRead??{toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:actualArgs?.id}}));
@@ -62,6 +73,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
         let evidence;
         try { evidence=actualArgs.evidenceJSON??JSON.parse(actualArgs.stateEvidence.markdown); } catch { throw new Error('INVALID_STATE_EVIDENCE_JSON: mutation was not executed. stateEvidence.markdown must contain valid JSON, without escaped outer quotes. Use the learned native input schema and JSON.stringify semantics.'); }
         if(!evidence || typeof evidence!=='object' || Array.isArray(evidence)) throw new Error('INVALID_STATE_EVIDENCE_JSON: evidence must be a JSON object. Mutation was not executed.');
+        if(actualArgs.evidenceJSON && evidence.sourceCoverage?.complete===true && evidence.sourceCoverage.fingerprint===undefined)evidence.sourceCoverage.fingerprint=context.fingerprint;
         if(evidence.sourceCoverage?.complete===true && evidence.sourceCoverage.fingerprint!==context.fingerprint) throw new Error('STATE_EVIDENCE_FINGERPRINT_MISMATCH: mutation was not executed. Bind sourceCoverage to the exact fully read READ_CASE fingerprint.');
         const prior=protectedEvidence.get(actualArgs.id);
         for(const key of ['manualPreparation','admission']) if(prior?.[key]!==undefined && evidence[key]!==undefined && !isDeepStrictEqual(evidence[key],prior[key])) throw new Error('STATE_EVIDENCE_PRESERVATION_REQUIRED: mutation was not executed. Preserve the exact existing '+key+' object from the native opportunity read-back.');
@@ -73,8 +85,8 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       if(record?.id && typeof record.stateEvidence?.markdown==='string') try { const evidence=JSON.parse(record.stateEvidence.markdown); if(evidence && typeof evidence==='object' && !Array.isArray(evidence)) protectedEvidence.set(record.id,evidence); } catch { /* An invalid historical blob is not an invented structured admission. */ }
     }
     if(actualName==='app_crm_case_context' && result?.mode==='READ_CASE' && output?.success!==false) {
-      const previous=casePages.get(result.opportunityId);
-      if(result.cursor===0 || (previous?.fingerprint===result.fingerprint && previous.next===result.cursor)) casePages.set(result.opportunityId,{fingerprint:result.fingerprint,next:result.nextCursor,complete:result.hasNextPage===false,nextRead:result.nextRead});
+      const coverage=trackCoverage(casePages.get(result.opportunityId),result);casePages.set(result.opportunityId,coverage);
+      if(result.hasNextPage) result.nextRead=coverage.nextRead;
     }
     return output;
   }}]));
@@ -94,6 +106,8 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       const recovered=policy.recoverError(error,observedSteps);
       return {...recovered,response:observedSteps.at(-1)?.response};
     });
+    const completeCases=[...casePages.values()].filter(c=>c.complete);
+    if(completeCases.length===1 && typeof result.text==='string')try{const value=JSON.parse(result.text);if(value && typeof value==='object' && Object.hasOwn(value,'sourceFingerprint')){value.sourceFingerprint=completeCases[0].fingerprint;result.text=JSON.stringify(value);}}catch{}
     const roundSteps = result.steps ?? [];
     steps.push(...roundSteps);
     usage = addUsage(usage,result.totalUsage ?? result.usage);
@@ -107,4 +121,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage};
