@@ -76,6 +76,19 @@ function addUsage(a = {}, b = {}) {
   }
   return out;
 }
+function schemaSkeleton(schema, depth = 0) {
+  if (!schema || typeof schema !== 'object' || depth > 8) return null;
+  if (Array.isArray(schema.enum) && schema.enum.length) return schema.enum[0];
+  if (schema.type === 'object' || schema.properties) {
+    const required = new Set(Array.isArray(schema.required) ? schema.required : Object.keys(schema.properties ?? {}));
+    return Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key])=>required.has(key)).map(([key,value])=>[key,schemaSkeleton(value,depth+1)]));
+  }
+  if (schema.type === 'array') return [];
+  if (schema.type === 'string') return '';
+  if (schema.type === 'number' || schema.type === 'integer') return 0;
+  if (schema.type === 'boolean') return false;
+  return null;
+}
 function nativeResponseMessages(steps, text) {
   const messages=[];
   for(const step of steps){
@@ -216,7 +229,8 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     if (stopReason) {
       return {...result,nativeExecutionError:stopReason+': '+checked.issues.join('; '),text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
     }
-    messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
+    const skeleton=policy.responseSchema ? JSON.stringify(schemaSkeleton(policy.responseSchema)) : '';
+    messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton};

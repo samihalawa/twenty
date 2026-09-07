@@ -45,6 +45,17 @@ test('length-limited output repairs even when no native cursor remains',async()=
  },{messages:[{role:'user',content:'prepare exact case'}],tools:{}},{enabled:true,maxRepairs:3});
  assert.equal(rounds,2);assert.equal(result.finishReason,'stop');assert.match(result.text,/complete/);
 });
+test('plain structured-output failure receives the exact required JSON shape',async()=>{
+ let rounds=0;
+ const responseSchema={type:'object',properties:{status:{type:'string'},candidateDecisions:{type:'array',items:{type:'object'}},documents:{type:'array',items:{type:'object'}}},required:['status','candidateDecisions','documents'],additionalProperties:false};
+ const result=await generateWithContinuation(async options=>{
+  if(++rounds===1)return {...receipt([],'I have enough context to prepare the package.'),nativeValidationError:'The final response must be valid JSON matching the configured response schema.'};
+  assert.match(options.messages.at(-1).content,/Required JSON shape/);
+  assert.match(options.messages.at(-1).content,/\{"status":"","candidateDecisions":\[\],"documents":\[\]\}/);
+  return receipt([],'{"status":"PREPARED","candidateDecisions":[],"documents":[]}');
+ },{messages:[{role:'user',content:'prepare'}],tools:{}},{enabled:true,responseSchema,maxRepairs:3});
+ assert.equal(rounds,2);assert.equal(result.text,'{"status":"PREPARED","candidateDecisions":[],"documents":[]}');
+});
 test('an explicitly opened exact case drains its immutable cursor receipts before model repair',async()=>{
  let rounds=0,executions=0,persisted=0;
  const result=await generateWithContinuation(async options=>{

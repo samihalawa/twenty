@@ -478,7 +478,7 @@ specs.find(x=>x.path.endsWith('workflow.mjs')).changes.push(["providerDraftId: d
 // Keep the native model conversation alive only for mechanically unfulfilled tool contracts.
 specs.find(x=>x.path.endsWith('agent-async-executor.service.js')).changes.push(
   ["            const textResponse = await (0, _ai.generateText)({", "            const textResponse = await require('/opt/workflow-lazy-tools/workflow-continuation.cjs').generateWithContinuation(_ai.generateText, {"],
-  ["            }).catch(error => {", "            }, {enabled: toolLoadingStrategy === 'lazy-workflow-explicit' && agent?.modelConfiguration?.workflowReadOnlyToolNames?.includes('app_crm_case_context'), maxToolCalls: 40, shouldContinue: () => !hasNoMoreAvailableCredits, recoverError: (error, steps) => require('/opt/workflow-lazy-tools/schema-validation.cjs').recoverStructuredParse(error, validateResponse, _ai.NoObjectGeneratedError?.isInstance(error) === true, steps, true)}).catch(error => {"]
+  ["            }).catch(error => {", "            }, {enabled: toolLoadingStrategy === 'lazy-workflow-explicit' && agent?.modelConfiguration?.workflowReadOnlyToolNames?.includes('app_crm_case_context'), maxToolCalls: 40, responseSchema: agentSchema, shouldContinue: () => !hasNoMoreAvailableCredits, recoverError: (error, steps) => require('/opt/workflow-lazy-tools/schema-validation.cjs').recoverStructuredParse(error, validateResponse, _ai.NoObjectGeneratedError?.isInstance(error) === true, steps, true)}).catch(error => {"]
 );
 
 // Native app tools must build edited source just like native code/workflow actions.
