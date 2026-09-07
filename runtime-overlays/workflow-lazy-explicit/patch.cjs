@@ -503,6 +503,11 @@ specs.find(x=>x.path.endsWith('tool-executor.service.js')).changes.push([
 
 specs.push(...[{"path": "engine/core-modules/tool-provider/providers/database-tool.provider.js", "sha256": "01d53310329f3b8d97764c78042e5e4802819a7f9f23e2474d8c0ee78c08de2b", "changes": [["            if (canUpdateRecords && canBeManagedByAutomation) {", "            if (canUpdateRecords && (canBeManagedByAutomation || ['messageThread','calendarEvent'].includes(objectMetadata.nameSingular))) {"], ["        return descriptors;\n    }\n    hasMatchingTool", "        return descriptors.filter(d => !['messageThread','calendarEvent'].includes(d.objectName) || ['find_one','find_many','group_by','update_one'].includes(d.operation));\n    }\n    hasMatchingTool"]]}, {"path": "engine/core-modules/record-crud/services/update-many-records.service.js", "sha256": "56485b49823c9d789f81ddfda8febb82ef9790f8138f7c64aa6d7ce3592d7d62", "changes": [["            if (!(0, _workflow.canObjectBeManagedByAutomation)({\n                nameSingular: flatObjectMetadata.nameSingular\n            })) {", "            if (!(0, _workflow.canObjectBeManagedByAutomation)({\n                nameSingular: flatObjectMetadata.nameSingular\n            }) && !(params.customFieldsOnly === true && require('/opt/workflow-lazy-tools/structured-evidence.cjs').isCustomOnly(objectName, data))) {"]]}]);
 
+specs.find(x=>x.path.endsWith('tool-executor.service.js')).changes.push([
+ "        const result = await this.logicFunctionExecutorService.executeOneFromSource({\n            id: ref.logicFunctionId,\n            workspaceId: context.workspaceId,\n            payload: args\n        });",
+ "        const invoke = payload => this.logicFunctionExecutorService.executeOneFromSource({id: ref.logicFunctionId, workspaceId: context.workspaceId, payload});\n        const result = ref.logicFunctionId === '6f156fd8-ec80-45d2-90e8-e6ba87c2f9c5' && args.mode === 'READ_CASE' ? await require('/opt/workflow-lazy-tools/case-pagination.cjs').executeCaseContext(invoke,args,context.workspaceId) : await invoke(args);"
+]);
+
 function preparePatches() {
   return specs.map(spec => {
     const absolutePath = path.join(root, spec.path);
