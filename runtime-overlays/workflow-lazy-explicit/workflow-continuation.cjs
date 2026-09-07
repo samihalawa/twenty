@@ -93,7 +93,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
     const observedSteps=[];
-    const result = await generateText({...options, tools, messages,
+    let result = await generateText({...options, tools, messages,
       onStepFinish:async step=>{observedSteps.push(step);await options.onStepFinish?.(step);},
       experimental_repairToolCall:async repairInput=>{
         const match=repairInput.toolCall?.toolName?.match(/^(.+)<\|channel\|>(?:analysis|commentary|json)$/);
@@ -107,7 +107,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       return {...recovered,response:observedSteps.at(-1)?.response};
     });
     const completeCases=[...casePages.values()].filter(c=>c.complete);
-    if(completeCases.length===1 && typeof result.text==='string')try{const value=JSON.parse(result.text);if(value && typeof value==='object' && Object.hasOwn(value,'sourceFingerprint')){value.sourceFingerprint=completeCases[0].fingerprint;result.text=JSON.stringify(value);}}catch{}
+    if(completeCases.length===1 && typeof result.text==='string')try{const value=JSON.parse(result.text);if(value && typeof value==='object' && Object.hasOwn(value,'sourceFingerprint')){value.sourceFingerprint=completeCases[0].fingerprint;result={...result,text:JSON.stringify(value)};}}catch{}
     const roundSteps = result.steps ?? [];
     steps.push(...roundSteps);
     usage = addUsage(usage,result.totalUsage ?? result.usage);
