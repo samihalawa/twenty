@@ -35,6 +35,24 @@ test('length-limited premature output continues to the unread native cursor',asy
  },{model,maxOutputTokens:8192,messages:[{role:'user',content:'prepare exact case'}],tools:{}},{enabled:true,maxRepairs:3});
  assert.equal(rounds,2);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
 });
+test('an explicitly opened exact case drains its immutable cursor receipts before model repair',async()=>{
+ let rounds=0,executions=0,persisted=0;
+ const result=await generateWithContinuation(async options=>{
+  rounds++;
+  if(rounds===1){
+   const first=await options.tools.execute_tool.execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:0}});
+   return receipt([step('app_crm_case_context',{mode:'READ_CASE',opportunityId:'case',cursor:0},first.result)],'{"status":"PREPARED","content":"premature"}');
+  }
+  const receipts=options.messages.filter(message=>message.role==='tool');
+  assert.ok(receipts.length>=2);assert.match(options.messages.at(-1).content,/Exact READ_CASE cursor transport completed/);
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{messages:[{role:'user',content:'prepare exact case'}],onStepFinish:async()=>{persisted++;},tools:{execute_tool:{execute:async input=>{
+  executions++;const cursor=input.arguments.cursor;
+  return {success:true,result:{mode:'READ_CASE',opportunityId:'case',fingerprint:'hash',cursor,nextCursor:cursor===0?2:cursor===2?4:null,hasNextPage:cursor<4,totalSections:6,providerPaginationComplete:true,sections:Array.from({length:2},(_,i)=>({sourceId:'message-'+(cursor+i)}))}};
+ }}}},{enabled:true,maxToolCalls:40});
+ assert.equal(rounds,2);assert.equal(executions,3);assert.equal(persisted,2);
+ assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
+});
 test('same run tool budget prevents another actual tool execution',async()=>{
  let executions=0,rounds=0;
  const result=await generateWithContinuation(async opts=>{rounds++;await opts.tools.execute_tool.execute({});return receipt([page(0,2)]);},{tools:{execute_tool:{execute:async()=>{executions++;}}}},{enabled:true,maxToolCalls:1});

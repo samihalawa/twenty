@@ -156,10 +156,37 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     const roundSteps = result.steps ?? [];
     steps.push(...roundSteps);
     usage = addUsage(usage,result.totalUsage ?? result.usage);
-    const checked = inspectContinuation(steps,result.text);
+    let checked = inspectContinuation(steps,result.text);
     stalledRounds = used > callsBeforeRound ? 0 : stalledRounds + 1;
     if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
     const originalMessages = JSON.parse(JSON.stringify(result.response?.messages?.length ? result.response.messages : nativeResponseMessages(roundSteps.length?roundSteps:observedSteps,result.text)));
+    const cursorMessages=[];
+    // Once the native agent explicitly opens an exact case, advancing its
+    // immutable snapshot cursor is transport rather than contextual judgment.
+    // Drain only that already-bound READ_CASE sequence, retain every native
+    // receipt in the persisted step log and leave candidate selection, related
+    // source reads, mutations and final prose to the same model.
+    while([...casePages.values()].some(state=>!state.complete) && used<maxCalls) {
+      const state=[...casePages.values()].find(item=>!item.complete),input=state.nextRead;
+      if(!input)break;
+      const toolCallId='native-case-cursor-'+Date.now()+'-'+used;
+      let output,synthetic;
+      try {
+        output=await tools.execute_tool.execute(input);
+        synthetic={toolCalls:[{type:'tool-call',toolCallId,toolName:'execute_tool',input}],toolResults:[{type:'tool-result',toolCallId,toolName:'execute_tool',output}],content:[]};
+      } catch(error) {
+        synthetic={toolCalls:[{type:'tool-call',toolCallId,toolName:'execute_tool',input}],toolResults:[{type:'tool-error',toolCallId,toolName:'execute_tool',error:String(error)}],content:[]};
+      }
+      steps.push(synthetic);cursorMessages.push(...nativeResponseMessages([synthetic],''));
+      await options.onStepFinish?.(synthetic);
+      if(synthetic.toolResults[0].type==='tool-error')break;
+    }
+    if(cursorMessages.length){
+      checked=inspectContinuation(steps,result.text);
+      if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
+      checked.issues.push('Exact READ_CASE cursor transport completed after the prior model output. Re-evaluate the same task now using every persisted source page before returning the final judgment or public content.');
+      stalledRounds=0;
+    }
     if (!checked.issues.length) return {...result,text:result.text,finishReason:result.finishReason,usage,totalUsage:usage,steps,response:result.response};
     // A length-limited draft can still be repaired in the same native execution.
     // Keep the fixed per-round output limit, retain the real tool history, and
@@ -170,7 +197,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     if (stopReason) {
       return {...result,nativeExecutionError:stopReason+': '+checked.issues.join('; '),text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
     }
-    messages = [...messages,...originalMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
+    messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
 module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput};
