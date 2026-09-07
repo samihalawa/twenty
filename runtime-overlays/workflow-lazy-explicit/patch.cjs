@@ -178,7 +178,7 @@ const specs = [
       "const stripNoisyKeysDeep = (value)=>{",
       "const stripNoisyKeysDeep = (value)=>{\n    if (value instanceof Date) return value;"
     ],
-    ["entry.state = 'success';", "entry.state = part.output?.success === false || part.output?.error ? 'error' : 'success';\n                    if (entry.state === 'error') entry.errorMessage = String(part.output.error ?? part.output.message ?? 'Native tool returned an unsuccessful operation').slice(0, MAX_ERROR_MESSAGE_LENGTH);"]
+    ["entry.state = 'success';", "const nativeOutcome = require('/opt/workflow-lazy-tools/workflow-continuation.cjs').nativeOutput(part.output);\n                    entry.state = nativeOutcome.ok ? 'success' : 'error';\n                    if (entry.state === 'error') entry.errorMessage = String(nativeOutcome.error ?? part.output.message ?? 'Native tool returned an unsuccessful operation').slice(0, MAX_ERROR_MESSAGE_LENGTH);"]
   ]
 },
 {

@@ -445,18 +445,19 @@ await test('installed compatible SDK forwards the paid provider allowlist into t
 
 await test('AI log sanitizer preserves nested Dates and still removes noisy keys',async()=>{
  const p=PATCHES.find(x=>x.path.endsWith('map-ai-steps-to-tool-call-logs.util.js'));
- const map=moduleClass(p.patched,'mapAiStepsToToolCallLogs',{'../../../../../utils/truncate-string-to-utf8-byte-budget.util':{truncateStringToUtf8ByteBudget:value=>({value,truncated:false})}});
+ const map=moduleClass(p.patched,'mapAiStepsToToolCallLogs',{'/opt/workflow-lazy-tools/workflow-continuation.cjs':require('./workflow-continuation.cjs'),'../../../../../utils/truncate-string-to-utf8-byte-budget.util':{truncateStringToUtf8ByteBudget:value=>({value,truncated:false})}});
  const stamp=new Date('2026-09-05T01:02:03.000Z');
  const out=map([{content:[{type:'tool-call',toolName:'read',toolCallId:'1',input:{}},{type:'tool-result',toolCallId:'1',output:{result:{records:[{lastReconciledAt:stamp,searchVector:'noise',nested:{receivedAt:stamp},empty:{}}]}}}]}]);
+ assert.equal(out[0].state,'success');
  const row=out[0].output.result.records[0];
  assert(row.lastReconciledAt instanceof Date);assert.equal(row.lastReconciledAt.toISOString(),stamp.toISOString());
  assert.equal(JSON.parse(JSON.stringify(row)).lastReconciledAt,stamp.toISOString());assert.equal(row.searchVector,undefined);assert.equal(Object.keys(row.empty).length,0);assert.equal(row.nested.receivedAt.toISOString(),stamp.toISOString());
 });
 await test('native unsuccessful tool payload is an error in persisted workflow logs',async()=>{
  const p=PATCHES.find(x=>x.path.endsWith('map-ai-steps-to-tool-call-logs.util.js'));
- const map=moduleClass(p.patched,'mapAiStepsToToolCallLogs',{'../../../../../utils/truncate-string-to-utf8-byte-budget.util':{truncateStringToUtf8ByteBudget:value=>({value,truncated:false})}});
- const result=map([{content:[{type:'tool-call',toolName:'execute_tool',toolCallId:'failed',input:{}},{type:'tool-result',toolCallId:'failed',output:{success:false,error:'Object message does not have filter field',records:[]}}]}]);
- assert.equal(result[0].state,'error');assert.match(result[0].errorMessage,/filter field/);assert.equal(result[0].output.success,false);
+ const map=moduleClass(p.patched,'mapAiStepsToToolCallLogs',{'/opt/workflow-lazy-tools/workflow-continuation.cjs':require('./workflow-continuation.cjs'),'../../../../../utils/truncate-string-to-utf8-byte-budget.util':{truncateStringToUtf8ByteBudget:value=>({value,truncated:false})}});
+ const result=map([{content:[{type:'tool-call',toolName:'execute_tool',toolCallId:'failed',input:{}},{type:'tool-result',toolCallId:'failed',output:{success:true,result:{success:false,error:'Object message does not have filter field',records:[]}}}]}]);
+ assert.equal(result[0].state,'error');assert.match(result[0].errorMessage,/filter field/);assert.equal(result[0].output.result.success,false);
 });
 function runHookFixture(){
  const p=PATCHES.find(x=>x.path.includes('useFindOneRecord-'));const body='const J='+p.patched.split(',J=')[1].split(';export')[0]+';J';

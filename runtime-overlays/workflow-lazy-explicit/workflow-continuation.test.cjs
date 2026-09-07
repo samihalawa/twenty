@@ -168,3 +168,14 @@ test('an empty structured-error round retains earlier native history instead of 
  },{tools:{}},{enabled:true,recoverError:()=>({text:'',steps:[],finishReason:'stop',nativeValidationError:'Empty final JSON'})});
  assert.equal(rounds,3);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
 });
+
+test('one canonical SDK event merge preserves separate errors for both history and verification',()=>{
+ const {nativeResponseMessages}=require('./workflow-continuation.cjs');
+ const raw={content:[{type:'tool-call',toolCallId:'bad-1',toolName:'execute_tool',input:{toolName:'find_many_messages',arguments:{filter:{bad:true}}}}],toolResults:[{type:'tool-error',toolCallId:'bad-1',error:'invalid filter field'}]};
+ const replay=nativeResponseMessages([raw],'');assert.equal(replay[1].role,'tool');assert.equal(replay[1].content[0].output.value,'invalid filter field');
+ assert.ok(inspectContinuation([raw],'STATUS: NO_WORK').issues.some(x=>x.includes('invalid filter field')));
+});
+test('nested error payload is never successful source coverage',()=>{
+ const bad=step('app_crm_case_context',{opportunityId:'case'},{data:{error:'Native provider unavailable',mode:'READ_CASE',opportunityId:'case',cursor:0,hasNextPage:false}});
+ assert.ok(inspectContinuation([bad],'STATUS: NO_WORK').issues.some(x=>x.includes('Native provider unavailable')));
+});

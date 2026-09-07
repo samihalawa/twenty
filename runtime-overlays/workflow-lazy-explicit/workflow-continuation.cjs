@@ -2,17 +2,34 @@
 const {isDeepStrictEqual} = require('node:util');
 const {verifySelectedCandidateReads}=require('./context-read-verification.cjs');
 const {inspectOperatorExecution}=require('./operator-verification.cjs');
+// Merge the actual SDK event representations once for verification and history replay.
+function nativeToolEvents(step) {
+  const calls=new Map(),results=new Map();
+  for(const c of [...(step.toolCalls??[]),...(step.content??[]).filter(p=>p.type==='tool-call')])calls.set(c.toolCallId,{...calls.get(c.toolCallId),...c});
+  for(const r of [...(step.toolResults??[]),...(step.content??[]).filter(p=>p.type==='tool-result'||p.type==='tool-error')]){
+    const old=results.get(r.toolCallId);
+    results.set(r.toolCallId,old?.type==='tool-error'?old:{...old,...r});
+  }
+  return {calls:[...calls.values()],results};
+}
+function nativeOutput(output) {
+  let value=output,error,ok=true;const seen=new Set();
+  for(let i=0;value&&typeof value==='object'&&!Array.isArray(value)&&i<8&&!seen.has(value);i++){
+    seen.add(value);if(value.success===false)ok=false;if(value.error){error??=value.error;ok=false;}
+    const next=value.result??value.data;if(next===undefined)break;value=next;
+  }
+  return {value,error,ok};
+}
 // Mechanical tool-result contracts only. The same native model retains all judgment.
 function inspectContinuation(steps, text) {
   const calls = [];
   for (const step of steps) {
-    const results = new Map([...(step.toolResults ?? []),...(step.content ?? []).filter(p => p.type === 'tool-result' || p.type === 'tool-error')].map(r => [r.toolCallId, r]));
-    for (const c of step.toolCalls ?? step.content?.filter(p => p.type === 'tool-call') ?? []) {
-      const r = results.get(c.toolCallId), raw = c.input ?? c.args;
-      const name = c.toolName === 'execute_tool' ? raw?.toolName : c.toolName;
-      const args = c.toolName === 'execute_tool' ? raw?.arguments : raw;
-      const output = r?.output ?? r?.result;
-      calls.push({ nativeName:c.toolName, error:r?.error??output?.error??(r?.type==='tool-error'?r.output:undefined), name, args, output: output?.result ?? output, ok: !!r && r.type !== 'tool-error' && !r.error && output?.success !== false && !output?.error });
+    const events=nativeToolEvents(step);
+    for (const c of events.calls) {
+      const r=events.results.get(c.toolCallId),raw=c.input??c.args;
+      const name=c.toolName==='execute_tool'?raw?.toolName:c.toolName,args=c.toolName==='execute_tool'?raw?.arguments:raw;
+      const output=nativeOutput(r?.output??r?.result),error=r?.error??(r?.type==='tool-error'?r.output:undefined)??output.error;
+      calls.push({nativeName:c.toolName,error,name,args,output:output.value,ok:!!r&&r.type!=='tool-error'&&!error&&output.ok});
     }
   }
   const issues = [], pages = new Map();
@@ -62,10 +79,10 @@ function addUsage(a = {}, b = {}) {
 function nativeResponseMessages(steps, text) {
   const messages=[];
   for(const step of steps){
-    const content=step.content?.length?step.content:[...(step.toolCalls??[]).map(p=>({...p,type:'tool-call'})),...(step.toolResults??[]).map(p=>({...p,type:p.type??'tool-result'}))];
-    const assistant=content.filter(p=>['text','reasoning','tool-call'].includes(p.type)).map(p=>p.type==='tool-call'?{type:'tool-call',toolCallId:p.toolCallId,toolName:p.toolName,input:p.input??p.args}:p);
+    const events=nativeToolEvents(step);
+    const assistant=[...(step.content??[]).filter(p=>['text','reasoning'].includes(p.type)&&typeof p.text==='string'),...events.calls.map(p=>({type:'tool-call',toolCallId:p.toolCallId,toolName:p.toolName,input:p.input??p.args}))];
     if(assistant.length)messages.push({role:'assistant',content:assistant});
-    const results=content.filter(p=>p.type==='tool-result'||p.type==='tool-error').map(p=>({type:'tool-result',toolCallId:p.toolCallId,toolName:p.toolName??content.find(c=>c.type==='tool-call'&&c.toolCallId===p.toolCallId)?.toolName,output:p.type==='tool-error'?{type:'error-text',value:String(p.error??p.output)}:{type:'json',value:p.output??p.result}}));
+    const results=[...events.results.values()].map(p=>({type:'tool-result',toolCallId:p.toolCallId,toolName:p.toolName??events.calls.find(c=>c.toolCallId===p.toolCallId)?.toolName,output:p.type==='tool-error'?{type:'error-text',value:String(p.error??p.output)}:{type:'json',value:p.output??p.result}}));
     if(results.length)messages.push({role:'tool',content:results});
   }
   if(typeof text==='string'&&text.trim())messages.push({role:'assistant',content:text});
@@ -105,13 +122,14 @@ async function generateWithContinuation(generateText, options, policy = {}) {
         for(const key of ['manualPreparation','admission','autonomousPreparation']) if(prior?.[key]!==undefined && evidence[key]!==undefined && !isDeepStrictEqual(evidence[key],prior[key])) throw new Error('STATE_EVIDENCE_PRESERVATION_REQUIRED: mutation was not executed. Preserve the exact existing '+key+' object from the native opportunity read-back.');
       }
     }
-    const output=await tool.execute(...args), result=output?.result??output;
-    nativeCalls.push({name:actualName,args:actualArgs,output,ok:output?.success!==false&&!output?.error});
-    if(actualName==='find_one_opportunity' && output?.success!==false) {
+    let output;try{output=await tool.execute(...args);}catch(error){nativeCalls.push({name:actualName,args:actualArgs,output:{success:false,error:String(error)},ok:false});throw error;}
+    const normalized=nativeOutput(output),result=normalized.value;
+    nativeCalls.push({name:actualName,args:actualArgs,output,ok:normalized.ok});
+    if(actualName==='find_one_opportunity' && normalized.ok) {
       const record=result?.records?.[0]??result;
       if(record?.id && typeof record.stateEvidence?.markdown==='string') try { const evidence=JSON.parse(record.stateEvidence.markdown); if(evidence && typeof evidence==='object' && !Array.isArray(evidence)) protectedEvidence.set(record.id,evidence); } catch { /* An invalid historical blob is not an invented structured admission. */ }
     }
-    if(actualName==='app_crm_case_context' && result?.mode==='READ_CASE' && output?.success!==false) {
+    if(actualName==='app_crm_case_context' && result?.mode==='READ_CASE' && normalized.ok) {
       const coverage=trackCoverage(casePages.get(result.opportunityId),result);casePages.set(result.opportunityId,coverage);
       if(result.hasNextPage) result.nextRead=coverage.nextRead;
     }
@@ -150,4 +168,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput};
