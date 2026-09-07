@@ -144,3 +144,27 @@ test('structured parse recovery without SDK messages retains actual native tool 
  },{tools:{},messages:[{role:'user',content:'case'}]},{enabled:true,recoverError:(_error,steps)=>({steps,text:'{"status":"TOOLING_BLOCKED"}',finishReason:'stop',usage:{outputTokens:12}})});
  assert.equal(rounds,2);assert.equal(result.steps.length,2);
 });
+
+test('actual SDK tool-error content is retained when toolResults contains only successful results',()=>{
+ const failed={toolCalls:[{toolCallId:'failed',toolName:'execute_tool',input:{toolName:'update_one_opportunity',arguments:{id:'case'}}}],toolResults:[],content:[{type:'tool-error',toolCallId:'failed',toolName:'execute_tool',error:Error('CANDIDATE_CONTEXT_DECISIONS_MISSING: exact thread requires a decision')}]};
+ assert.ok(inspectContinuation([failed],'STATUS: NO_WORK').issues.some(x=>x.includes('CANDIDATE_CONTEXT_DECISIONS_MISSING')));
+});
+test('real native tool progress may continue beyond three rounds within the fixed forty-call budget',async()=>{
+ let rounds=0;
+ const result=await generateWithContinuation(async options=>{
+  rounds++;await options.tools.execute_tool.execute({toolName:'find_one_person',arguments:{id:'canonical'}});
+  return receipt([rounds===5?page(2,null):page(0,2)],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{execute_tool:{execute:async()=>({success:true,result:{id:'canonical'}})}}},{enabled:true,maxToolCalls:40,maxRepairs:3});
+ assert.equal(rounds,5);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
+});
+
+test('an empty structured-error round retains earlier native history instead of declaring history unavailable',async()=>{
+ let rounds=0;const first=receipt([page(0,2)]);
+ const result=await generateWithContinuation(async options=>{
+  rounds++;if(rounds===1)return first;
+  if(rounds===2)throw Error('empty provider structured response');
+  assert.deepEqual(options.messages[0],first.response.messages[0]);
+  return receipt([page(2,null)],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{}},{enabled:true,recoverError:()=>({text:'',steps:[],finishReason:'stop',nativeValidationError:'Empty final JSON'})});
+ assert.equal(rounds,3);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
+});

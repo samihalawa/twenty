@@ -177,7 +177,8 @@ const specs = [
     [
       "const stripNoisyKeysDeep = (value)=>{",
       "const stripNoisyKeysDeep = (value)=>{\n    if (value instanceof Date) return value;"
-    ]
+    ],
+    ["entry.state = 'success';", "entry.state = part.output?.success === false || part.output?.error ? 'error' : 'success';\n                    if (entry.state === 'error') entry.errorMessage = String(part.output.error ?? part.output.message ?? 'Native tool returned an unsuccessful operation').slice(0, MAX_ERROR_MESSAGE_LENGTH);"]
   ]
 },
 {

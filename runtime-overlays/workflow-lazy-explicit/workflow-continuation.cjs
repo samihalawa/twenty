@@ -6,7 +6,7 @@ const {inspectOperatorExecution}=require('./operator-verification.cjs');
 function inspectContinuation(steps, text) {
   const calls = [];
   for (const step of steps) {
-    const results = new Map((step.toolResults ?? step.content?.filter(p => p.type === 'tool-result' || p.type === 'tool-error') ?? []).map(r => [r.toolCallId, r]));
+    const results = new Map([...(step.toolResults ?? []),...(step.content ?? []).filter(p => p.type === 'tool-result' || p.type === 'tool-error')].map(r => [r.toolCallId, r]));
     for (const c of step.toolCalls ?? step.content?.filter(p => p.type === 'tool-call') ?? []) {
       const r = results.get(c.toolCallId), raw = c.input ?? c.args;
       const name = c.toolName === 'execute_tool' ? raw?.toolName : c.toolName;
@@ -74,7 +74,7 @@ function nativeResponseMessages(steps, text) {
 async function generateWithContinuation(generateText, options, policy = {}) {
   if (!policy.enabled) return generateText(options);
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
-  let used = 0, usage = {}, messages = [...(options.messages ?? [])];
+  let used = 0, stalledRounds = 0, usage = {}, messages = [...(options.messages ?? [])];
   const steps = [];
   const casePages = new Map();
   const protectedEvidence = new Map();
@@ -119,7 +119,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   }}]));
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
-    const observedSteps=[];
+    const observedSteps=[], callsBeforeRound=used;
     let result = await generateText({...options, tools, messages,
       onStepFinish:async step=>{observedSteps.push(step);await options.onStepFinish?.(step);},
       experimental_repairToolCall:async repairInput=>{
@@ -139,10 +139,11 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     steps.push(...roundSteps);
     usage = addUsage(usage,result.totalUsage ?? result.usage);
     const checked = inspectContinuation(steps,result.text);
+    stalledRounds = used > callsBeforeRound ? 0 : stalledRounds + 1;
     if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
     const originalMessages = JSON.parse(JSON.stringify(result.response?.messages?.length ? result.response.messages : nativeResponseMessages(roundSteps.length?roundSteps:observedSteps,result.text)));
     if (!checked.issues.length) return {...result,text:result.text,finishReason:result.finishReason,usage,totalUsage:usage,steps,response:result.response};
-    const stopReason=policy.shouldContinue?.()===false?'CREDITS_UNAVAILABLE':used>=maxCalls||checked.calls>=maxCalls?'TOOL_BUDGET_EXHAUSTED':repair>=maxRepairs?'REPAIR_LIMIT_REACHED':result.finishReason==='length'?'OUTPUT_BUDGET_EXHAUSTED':!originalMessages.length?'NATIVE_HISTORY_UNAVAILABLE':null;
+    const stopReason=policy.shouldContinue?.()===false?'CREDITS_UNAVAILABLE':used>=maxCalls||checked.calls>=maxCalls?'TOOL_BUDGET_EXHAUSTED':stalledRounds>maxRepairs?'NO_PROGRESS_REPAIR_LIMIT_REACHED':result.finishReason==='length'?'OUTPUT_BUDGET_EXHAUSTED':null;
     if (stopReason) {
       return {...result,nativeExecutionError:stopReason+': '+checked.issues.join('; '),text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
     }

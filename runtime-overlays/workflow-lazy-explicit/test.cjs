@@ -452,6 +452,12 @@ await test('AI log sanitizer preserves nested Dates and still removes noisy keys
  assert(row.lastReconciledAt instanceof Date);assert.equal(row.lastReconciledAt.toISOString(),stamp.toISOString());
  assert.equal(JSON.parse(JSON.stringify(row)).lastReconciledAt,stamp.toISOString());assert.equal(row.searchVector,undefined);assert.equal(Object.keys(row.empty).length,0);assert.equal(row.nested.receivedAt.toISOString(),stamp.toISOString());
 });
+await test('native unsuccessful tool payload is an error in persisted workflow logs',async()=>{
+ const p=PATCHES.find(x=>x.path.endsWith('map-ai-steps-to-tool-call-logs.util.js'));
+ const map=moduleClass(p.patched,'mapAiStepsToToolCallLogs',{'../../../../../utils/truncate-string-to-utf8-byte-budget.util':{truncateStringToUtf8ByteBudget:value=>({value,truncated:false})}});
+ const result=map([{content:[{type:'tool-call',toolName:'execute_tool',toolCallId:'failed',input:{}},{type:'tool-result',toolCallId:'failed',output:{success:false,error:'Object message does not have filter field',records:[]}}]}]);
+ assert.equal(result[0].state,'error');assert.match(result[0].errorMessage,/filter field/);assert.equal(result[0].output.success,false);
+});
 function runHookFixture(){
  const p=PATCHES.find(x=>x.path.includes('useFindOneRecord-'));const body='const J='+p.patched.split(',J=')[1].split(';export')[0]+';J';
  let opts=null,data=null,index=0,refetches=0;const refs=[],effects=[];

@@ -36,13 +36,13 @@ function verifySelectedCandidateReads(sections, calls, decisions) {
   const chunks = /* @__PURE__ */ new Map();
   for (const section of sections) if (section.sourceType === "DETACHED_THREAD_CANDIDATE_CONTENT_NOT_READ") chunks.set(section.sourceId, [...chunks.get(section.sourceId) || [], section]);
   if (!chunks.size) return;
-  if (!Array.isArray(decisions)) throw Error("CANDIDATE_CONTEXT_DECISIONS_MISSING");
+  if (!Array.isArray(decisions)) throw Error('CANDIDATE_CONTEXT_DECISIONS_MISSING: return candidateDecisions as an array of {threadId,decision:"READ"|"EXCLUDE",reason}; include each exact thread: ' + [...chunks.keys()].join(", "));
   const byId = /* @__PURE__ */ new Map();
   for (const decision of decisions) {
-    if (!decision || typeof decision !== "object" || !chunks.has(decision.threadId) || byId.has(decision.threadId) || !["READ", "EXCLUDE"].includes(decision.decision) || !text(decision.reason).trim()) throw Error("CANDIDATE_CONTEXT_DECISION_INVALID");
+    if (!decision || typeof decision !== "object" || !chunks.has(decision.threadId) || byId.has(decision.threadId) || !["READ", "EXCLUDE"].includes(decision.decision) || !text(decision.reason).trim()) throw Error("CANDIDATE_CONTEXT_DECISION_INVALID: thread " + String(decision?.threadId ?? "(missing)") + " must occur exactly once with decision READ or EXCLUDE and a nonempty source-based reason; allowed IDs: " + [...chunks.keys()].join(", "));
     byId.set(decision.threadId, decision);
   }
-  if (byId.size !== chunks.size) throw Error("CANDIDATE_CONTEXT_DECISIONS_INCOMPLETE");
+  if (byId.size !== chunks.size) throw Error("CANDIDATE_CONTEXT_DECISIONS_INCOMPLETE: missing exact thread decisions: " + [...chunks.keys()].filter((id) => !byId.has(id)).join(", "));
   for (const [threadId, parts] of chunks) {
     let serialized = "";
     for (const part of parts.sort((a, b) => a.offset - b.offset)) {
@@ -70,7 +70,7 @@ function verifySelectedCandidateReads(sections, calls, decisions) {
         observed.add(record.id);
       }
     }
-    if (!initial || !terminal || observed.size !== expected.size) throw Error("SELECTED_CONTEXT_READ_INCOMPLETE");
+    if (!initial || !terminal || observed.size !== expected.size) throw Error("SELECTED_CONTEXT_READ_INCOMPLETE: thread " + threadId + " requires full native find_many_messages pagination from offset 0 through hasNextPage false; unread exact message IDs: " + [...expected.keys()].filter((id) => !observed.has(id)).join(", "));
   }
 }
 
