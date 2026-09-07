@@ -508,6 +508,13 @@ specs.find(x=>x.path.endsWith('tool-executor.service.js')).changes.push([
  "        const invoke = payload => this.logicFunctionExecutorService.executeOneFromSource({id: ref.logicFunctionId, workspaceId: context.workspaceId, payload});\n        const result = ref.logicFunctionId === '6f156fd8-ec80-45d2-90e8-e6ba87c2f9c5' && args.mode === 'READ_CASE' ? await require('/opt/workflow-lazy-tools/case-pagination.cjs').executeCaseContext(invoke,args,context.workspaceId) : await invoke(args);"
 ]);
 
+specs.find(x=>x.path.endsWith('logic-function/logic-function.workflow-action.js')).changes.push(
+ ['const _common = require("@nestjs/common");','const _common = require("@nestjs/common");\nconst _core = require("@nestjs/core");\nconst _preparationRunner = require("../../../workflow-runner/workspace-services/workflow-runner.workspace-service");'],
+ ['    constructor(logicFunctionExecutorService, flatEntityMapsCacheService){','    constructor(logicFunctionExecutorService, flatEntityMapsCacheService, moduleRef){\n        this.moduleRef = moduleRef;'],
+ ['typeof _workspacemanyorallflatentitymapscacheservice.WorkspaceManyOrAllFlatEntityMapsCacheService === "undefined" ? Object : _workspacemanyorallflatentitymapscacheservice.WorkspaceManyOrAllFlatEntityMapsCacheService\n    ])','typeof _workspacemanyorallflatentitymapscacheservice.WorkspaceManyOrAllFlatEntityMapsCacheService === "undefined" ? Object : _workspacemanyorallflatentitymapscacheservice.WorkspaceManyOrAllFlatEntityMapsCacheService,\n        _core.ModuleRef\n    ])'],
+ ['        return {\n            result: result.data || {}\n        };','        return {\n            result: await require("/opt/workflow-lazy-tools/native-preparation.cjs").enqueueVerifiedPreparation({input:workflowActionInput,data:result.data||{},runInfo,currentStepId,getRunner:()=>this.moduleRef.get(_preparationRunner.WorkflowRunnerWorkspaceService,{strict:false})})\n        };']
+);
+
 function preparePatches() {
   return specs.map(spec => {
     const absolutePath = path.join(root, spec.path);

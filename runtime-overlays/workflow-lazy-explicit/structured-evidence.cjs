@@ -24,9 +24,9 @@ function prepare(objectName,args,current) {
   if(incoming!==undefined && (!incoming || typeof incoming!=='object' || Array.isArray(incoming)))throw Error('evidenceJSON must be a JSON object.');
   let previous={};
   if(typeof current[field]?.markdown==='string')try {const parsed=JSON.parse(current[field].markdown);if(parsed && typeof parsed==='object'&&!Array.isArray(parsed))previous=parsed;} catch {} // Legacy malformed interpretation is replaced; no fictitious structure is invented.
-  for(const key of ['admission','manualPreparation'])if(previous[key]!==undefined && incoming?.[key]!==undefined && !isDeepStrictEqual(previous[key],incoming[key]))throw Error('PROTECTED_EVIDENCE_CONFLICT: preserve existing '+key+'; no mutation executed.');
+  for(const key of ['admission','manualPreparation','autonomousPreparation'])if(previous[key]!==undefined && incoming?.[key]!==undefined && !isDeepStrictEqual(previous[key],incoming[key]))throw Error('PROTECTED_EVIDENCE_CONFLICT: preserve existing '+key+'; no mutation executed.');
   const {id,evidenceJSON,expectedUpdatedAt,...data}=args;
-  if(field && incoming!==undefined)data[field]={markdown:JSON.stringify({...previous,...incoming,...Object.fromEntries(['admission','manualPreparation'].filter(k=>previous[k]!==undefined).map(k=>[k,previous[k]]))})};
+  if(field && incoming!==undefined)data[field]={markdown:JSON.stringify({...previous,...incoming,...Object.fromEntries(['admission','manualPreparation','autonomousPreparation'].filter(k=>previous[k]!==undefined).map(k=>[k,previous[k]]))})};
   if(custom && !isCustomOnly(objectName,data))throw Error('Only explicitly supported CRM custom fields may be updated on synced objects.');
   return {filter:{and:[{id:{eq:id}},{updatedAt:{eq:expectedUpdatedAt}}]},data};
 }

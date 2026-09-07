@@ -3,7 +3,7 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const {inspectContinuation,generateWithContinuation} = require('./workflow-continuation.cjs');
 let seq = 0;
 const step = (name,args,result,ok=true) => {const id=String(++seq);return {toolCalls:[{toolName:'execute_tool',toolCallId:id,input:{toolName:name,arguments:args}}],toolResults:[{type:'tool-result',toolCallId:id,output:{success:ok,result}}],content:[]};};
-const page = (cursor,next) => step('app_crm_case_context',{mode:'READ_CASE',opportunityId:'case',cursor},{mode:'READ_CASE',opportunityId:'case',cursor,nextCursor:next,hasNextPage:next!==null,fingerprint:'hash',nextRead:next===null?null:{toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:next,fingerprint:'hash'}}});
+const page = (cursor,next) => step('app_crm_case_context',{mode:'READ_CASE',opportunityId:'case',cursor},{mode:'READ_CASE',opportunityId:'case',cursor,nextCursor:next,hasNextPage:next!==null,totalSections:next===4||cursor===4?6:4,providerPaginationComplete:true,sections:Array.from({length:(next??(cursor===4?6:4))-cursor},(_,i)=>({sourceId:'message-'+(cursor+i)})),fingerprint:'hash',nextRead:next===null?null:{toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:next,fingerprint:'hash'}}});
 const receipt = (steps,text='STATUS: COMPLETED') => ({steps,text,finishReason:'stop',usage:{inputTokens:10,outputTokens:5},response:{messages:[{role:'assistant',content:'native response '+seq}]}});
 test('unfinished exact pages require continuation even under needs-evidence label',()=>{
  assert.match(inspectContinuation([page(0,2)],'STATUS: NEEDS_EVIDENCE').issues[0],/Unread source pages/);
@@ -14,7 +14,7 @@ test('genuine evidence gap after full context is not forced into completed work'
 test('successful mutation requires read-back but never repeat mutation',()=>{
  const write=step('update_one_opportunity',{id:'case',nextStep:'existing decision'},{id:'case'});
  assert.match(inspectContinuation([write],'STATUS: COMPLETED').issues[0],/Do not repeat/);
- assert.deepEqual(inspectContinuation([write,step('find_one_opportunity',{id:'case'},{records:[{id:'case'}]})],'STATUS: COMPLETED').issues,[]);
+ assert.deepEqual(inspectContinuation([page(0,null),write,step('find_one_opportunity',{id:'case'},{records:[{id:'case'}]})],'STATUS: COMPLETED').issues,[]);
 });
 test('repair preserves original and native response messages, model and token setting',async()=>{
  const model={}, seen=[];
@@ -126,4 +126,9 @@ test('candidate index cannot authorize a mutation until exact selected bodies ar
   if(input.toolName==='find_many_messages')return {success:true,result:{hasNextPage:false,records:[{id:'message',messageThreadId:'thread',text:body}]}};
   return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor:0,nextCursor:null,hasNextPage:false,totalSections:1,fingerprint:'hash',sections:[section]}};
  }}}},{enabled:true});assert.equal(writes,1);
+});
+
+test('false NO_WORK after complete case reads is fed back through the independent operator verifier',()=>{
+ const checked=inspectContinuation([page(0,null)],'STATUS: NO_WORK\nMISSING_EVIDENCE:none');
+ assert.ok(checked.issues.some(x=>x.includes('NO_WORK has no bounded source search')));
 });

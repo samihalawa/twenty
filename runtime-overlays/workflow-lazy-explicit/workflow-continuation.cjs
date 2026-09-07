@@ -1,6 +1,7 @@
 'use strict';
 const {isDeepStrictEqual} = require('node:util');
 const {verifySelectedCandidateReads}=require('./context-read-verification.cjs');
+const {inspectOperatorExecution}=require('./operator-verification.cjs');
 // Mechanical tool-result contracts only. The same native model retains all judgment.
 function inspectContinuation(steps, text) {
   const calls = [];
@@ -33,7 +34,12 @@ function inspectContinuation(steps, text) {
   if (completed && failedWrites.length && !writes.some(c=>c.ok)) issues.push('Every attempted business mutation failed; COMPLETED is false. Learn the exact failed tool schema and repair the intended permitted operation, then read it back, or report TOOLING_BLOCKED. Native update_one_opportunity uses id plus direct fields, never opportunityId/set.');
   const report=String(text).replace(/\*\*/g,'');
   if(/STATUS\s*:\s*NEEDS_EVIDENCE\b/.test(report) && /MISSING_EVIDENCE\s*:\s*(?:none|nothing|no missing evidence)\b/i.test(report)) issues.push('NEEDS_EVIDENCE contradicts MISSING_EVIDENCE:none. An unread or unavailable source must be identified for that status. If coverage is complete, finish the supported reconciliation and read it back; waiting for another person is a business state to record, not an evidence gap.');
-  return { issues, calls: calls.length };
+  if(/STATUS\s*[:*\s]+(?:COMPLETED|NO_WORK|NEEDS_EVIDENCE|ENTITY_CONFLICT)\b/.test(String(text).replace(/\*\*/g,''))){
+    const run={state:{stepInfos:{native:{result:{response:text}}}},stepLogs:{native:{details:{toolCalls:calls.map(c=>({toolName:'execute_tool',input:{toolName:c.name,arguments:c.args},state:c.ok?'success':'error',output:{success:c.ok,result:c.output}}))}}}};
+    const verdict=inspectOperatorExecution(run,'native');
+    issues.push(...verdict.problems.map(problem=>'Independent native execution verification: '+problem));
+  }
+  return { issues:[...new Set(issues)], calls: calls.length };
 }
 function trackCoverage(prior,p) {
   const state=prior?.fingerprint===p.fingerprint?prior:{fingerprint:p.fingerprint,ranges:[],terminalEnd:null,sections:new Map()};
@@ -84,7 +90,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
         if(actualArgs.evidenceJSON && evidence.sourceCoverage?.complete===true && evidence.sourceCoverage.fingerprint===undefined)evidence.sourceCoverage.fingerprint=context.fingerprint;
         if(evidence.sourceCoverage?.complete===true && evidence.sourceCoverage.fingerprint!==context.fingerprint) throw new Error('STATE_EVIDENCE_FINGERPRINT_MISMATCH: mutation was not executed. Bind sourceCoverage to the exact fully read READ_CASE fingerprint.');
         const prior=protectedEvidence.get(actualArgs.id);
-        for(const key of ['manualPreparation','admission']) if(prior?.[key]!==undefined && evidence[key]!==undefined && !isDeepStrictEqual(evidence[key],prior[key])) throw new Error('STATE_EVIDENCE_PRESERVATION_REQUIRED: mutation was not executed. Preserve the exact existing '+key+' object from the native opportunity read-back.');
+        for(const key of ['manualPreparation','admission','autonomousPreparation']) if(prior?.[key]!==undefined && evidence[key]!==undefined && !isDeepStrictEqual(evidence[key],prior[key])) throw new Error('STATE_EVIDENCE_PRESERVATION_REQUIRED: mutation was not executed. Preserve the exact existing '+key+' object from the native opportunity read-back.');
       }
     }
     const output=await tool.execute(...args), result=output?.result??output;
