@@ -151,10 +151,27 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       const recovered=policy.recoverError(error,observedSteps);
       return {...recovered,response:observedSteps.at(-1)?.response};
     });
-    const completeCases=[...casePages.values()].filter(c=>c.complete);
-    if(completeCases.length===1 && typeof result.text==='string')try{const value=JSON.parse(result.text);if(value && typeof value==='object' && Object.hasOwn(value,'sourceFingerprint')){value.sourceFingerprint=completeCases[0].fingerprint;result={...result,text:JSON.stringify(value)};}}catch{}
     const roundSteps = result.steps ?? [];
     steps.push(...roundSteps);
+    // Some AI SDK/provider paths surface an executed lazy tool only in the
+    // returned step receipt. Reconstruct the same mechanical READ_CASE state
+    // from that authoritative receipt so cursor draining never depends on the
+    // provider having invoked our execute proxy in a particular shape.
+    for(const step of (roundSteps.length ? roundSteps : observedSteps)) {
+      const events=nativeToolEvents(step);
+      for(const call of events.calls) {
+        const receipt=events.results.get(call.toolCallId),raw=call.input??call.args;
+        const name=call.toolName==='execute_tool'?raw?.toolName:call.toolName;
+        const output=nativeOutput(receipt?.output??receipt?.result);
+        if(name==='app_crm_case_context' && receipt?.type!=='tool-error' && output.ok && output.value?.mode==='READ_CASE') {
+          const page=output.value;
+          const coverage=trackCoverage(casePages.get(page.opportunityId),page);
+          casePages.set(page.opportunityId,coverage);
+        }
+      }
+    }
+    const completeCases=[...casePages.values()].filter(c=>c.complete);
+    if(completeCases.length===1 && typeof result.text==='string')try{const value=JSON.parse(result.text);if(value && typeof value==='object' && Object.hasOwn(value,'sourceFingerprint')){value.sourceFingerprint=completeCases[0].fingerprint;result={...result,text:JSON.stringify(value)};}}catch{}
     usage = addUsage(usage,result.totalUsage ?? result.usage);
     let checked = inspectContinuation(steps,result.text);
     stalledRounds = used > callsBeforeRound ? 0 : stalledRounds + 1;
@@ -167,7 +184,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     // Drain only that already-bound READ_CASE sequence, retain every native
     // receipt in the persisted step log and leave candidate selection, related
     // source reads, mutations and final prose to the same model.
-    while([...casePages.values()].some(state=>!state.complete) && used<maxCalls) {
+    while(typeof tools.execute_tool?.execute==='function' && [...casePages.values()].some(state=>!state.complete) && used<maxCalls) {
       const state=[...casePages.values()].find(item=>!item.complete),input=state.nextRead;
       if(!input)break;
       const toolCallId='native-case-cursor-'+Date.now()+'-'+used;

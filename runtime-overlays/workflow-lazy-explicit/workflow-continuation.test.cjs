@@ -63,6 +63,20 @@ test('an explicitly opened exact case drains its immutable cursor receipts befor
  assert.equal(rounds,2);assert.equal(executions,3);assert.equal(persisted,2);
  assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
 });
+test('returned SDK receipt also initializes deterministic cursor drain',async()=>{
+ let rounds=0,executions=0;
+ const result=await generateWithContinuation(async options=>{
+  rounds++;
+  if(rounds===1)return {...receipt([page(0,2)],'{"status":"PREPARED","content":"premature"}'),finishReason:'length'};
+  const toolReceipts=options.messages.filter(message=>message.role==='tool');
+  assert.ok(toolReceipts.length>=1);assert.match(options.messages.at(-1).content,/cursor transport completed/);
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{messages:[{role:'user',content:'prepare exact case'}],tools:{execute_tool:{execute:async input=>{
+  executions++;assert.equal(input.arguments.cursor,2);
+  return {success:true,result:{mode:'READ_CASE',opportunityId:'case',fingerprint:'hash',cursor:2,nextCursor:null,hasNextPage:false,totalSections:4,providerPaginationComplete:true,sections:[{sourceId:'message-2'},{sourceId:'message-3'}]}};
+ }}}},{enabled:true,maxToolCalls:40});
+ assert.equal(rounds,2);assert.equal(executions,1);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
+});
 test('same run tool budget prevents another actual tool execution',async()=>{
  let executions=0,rounds=0;
  const result=await generateWithContinuation(async opts=>{rounds++;await opts.tools.execute_tool.execute({});return receipt([page(0,2)]);},{tools:{execute_tool:{execute:async()=>{executions++;}}}},{enabled:true,maxToolCalls:1});
@@ -192,9 +206,10 @@ test('real native tool progress may continue beyond three rounds within the fixe
  let rounds=0;
  const result=await generateWithContinuation(async options=>{
   rounds++;await options.tools.execute_tool.execute({toolName:'find_one_person',arguments:{id:'canonical'}});
-  return receipt([rounds===5?page(2,null):page(0,2)],'STATUS: NEEDS_EVIDENCE');
+  if(rounds<5)return {...receipt([],'{"status":"PREPARED","content":"partial"}'),finishReason:'length'};
+  return receipt([],'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: exact provider confirmation');
  },{tools:{execute_tool:{execute:async()=>({success:true,result:{id:'canonical'}})}}},{enabled:true,maxToolCalls:40,maxRepairs:3});
- assert.equal(rounds,5);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
+ assert.equal(rounds,5);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: exact provider confirmation');
 });
 
 test('an empty structured-error round retains earlier native history instead of declaring history unavailable',async()=>{
