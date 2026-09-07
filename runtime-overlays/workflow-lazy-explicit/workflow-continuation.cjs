@@ -1,4 +1,5 @@
 'use strict';
+const {isDeepStrictEqual} = require('node:util');
 // Mechanical tool-result contracts only. The same native model retains all judgment.
 function inspectContinuation(steps, text) {
   const calls = [];
@@ -44,10 +45,34 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
   let used = 0, usage = {}, messages = [...(options.messages ?? [])];
   const steps = [];
+  const casePages = new Map();
+  const protectedEvidence = new Map();
   const tools = Object.fromEntries(Object.entries(options.tools ?? {}).map(([name,tool]) => [name, !tool.execute ? tool : {...tool,execute:async (...args)=>{
     if (used >= maxCalls) throw new Error('NATIVE_TOOL_BUDGET_EXHAUSTED: preserve unfinished work for continuation');
     used++;
-    return tool.execute(...args);
+    const input=args[0], actualName=name==='execute_tool'?input?.toolName:name, actualArgs=name==='execute_tool'?input?.arguments:input;
+    if(actualName==='update_one_opportunity') {
+      const context=casePages.get(actualArgs?.id);
+      if(!context?.complete) throw new Error('CASE_CONTEXT_INCOMPLETE: mutation was not executed. Read every READ_CASE page for this exact opportunity before deciding or updating. '+JSON.stringify(context?.nextRead??{toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:actualArgs?.id}}));
+      if(actualArgs?.stateEvidence?.markdown!==undefined) {
+        let evidence;
+        try { evidence=JSON.parse(actualArgs.stateEvidence.markdown); } catch { throw new Error('INVALID_STATE_EVIDENCE_JSON: mutation was not executed. stateEvidence.markdown must contain valid JSON, without escaped outer quotes. Use the learned native input schema and JSON.stringify semantics.'); }
+        if(!evidence || typeof evidence!=='object' || Array.isArray(evidence)) throw new Error('INVALID_STATE_EVIDENCE_JSON: evidence must be a JSON object. Mutation was not executed.');
+        if(evidence.sourceCoverage?.complete===true && evidence.sourceCoverage.fingerprint!==context.fingerprint) throw new Error('STATE_EVIDENCE_FINGERPRINT_MISMATCH: mutation was not executed. Bind sourceCoverage to the exact fully read READ_CASE fingerprint.');
+        const prior=protectedEvidence.get(actualArgs.id);
+        for(const key of ['manualPreparation','admission']) if(prior?.[key]!==undefined && !isDeepStrictEqual(evidence[key],prior[key])) throw new Error('STATE_EVIDENCE_PRESERVATION_REQUIRED: mutation was not executed. Preserve the exact existing '+key+' object from the native opportunity read-back.');
+      }
+    }
+    const output=await tool.execute(...args), result=output?.result??output;
+    if(actualName==='find_one_opportunity' && output?.success!==false) {
+      const record=result?.records?.[0]??result;
+      if(record?.id && typeof record.stateEvidence?.markdown==='string') try { const evidence=JSON.parse(record.stateEvidence.markdown); if(evidence && typeof evidence==='object' && !Array.isArray(evidence)) protectedEvidence.set(record.id,evidence); } catch { /* An invalid historical blob is not an invented structured admission. */ }
+    }
+    if(actualName==='app_crm_case_context' && result?.mode==='READ_CASE' && output?.success!==false) {
+      const previous=casePages.get(result.opportunityId);
+      if(result.cursor===0 || (previous?.fingerprint===result.fingerprint && previous.next===result.cursor)) casePages.set(result.opportunityId,{fingerprint:result.fingerprint,next:result.nextCursor,complete:result.hasNextPage===false,nextRead:result.nextRead});
+    }
+    return output;
   }}]));
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
