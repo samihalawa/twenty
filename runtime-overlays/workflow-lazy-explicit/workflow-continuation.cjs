@@ -158,6 +158,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     usage = addUsage(usage,result.totalUsage ?? result.usage);
     let checked = inspectContinuation(steps,result.text);
     stalledRounds = used > callsBeforeRound ? 0 : stalledRounds + 1;
+    if(result.finishReason === 'length') checked.issues.push('The previous response reached the fixed output-token limit and is incomplete. Return one concise valid final response matching the original schema; retain the existing native reads and do not repeat completed tool calls.');
     if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
     const originalMessages = JSON.parse(JSON.stringify(result.response?.messages?.length ? result.response.messages : nativeResponseMessages(roundSteps.length?roundSteps:observedSteps,result.text)));
     const cursorMessages=[];
@@ -183,6 +184,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     }
     if(cursorMessages.length){
       checked=inspectContinuation(steps,result.text);
+      if(result.finishReason === 'length') checked.issues.push('The previous response reached the fixed output-token limit and is incomplete. Return one concise valid final response matching the original schema; retain the existing native reads and do not repeat completed tool calls.');
       if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
       checked.issues.push('Exact READ_CASE cursor transport completed after the prior model output. Re-evaluate the same task now using every persisted source page before returning the final judgment or public content.');
       stalledRounds=0;

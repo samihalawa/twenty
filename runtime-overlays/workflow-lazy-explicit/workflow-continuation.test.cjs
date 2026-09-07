@@ -35,6 +35,16 @@ test('length-limited premature output continues to the unread native cursor',asy
  },{model,maxOutputTokens:8192,messages:[{role:'user',content:'prepare exact case'}],tools:{}},{enabled:true,maxRepairs:3});
  assert.equal(rounds,2);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
 });
+test('length-limited output repairs even when no native cursor remains',async()=>{
+ let rounds=0;
+ const result=await generateWithContinuation(async options=>{
+  rounds++;
+  if(rounds===1)return {...receipt([],'{"status":"PREPARED","content":"truncated"}'),finishReason:'length'};
+  assert.match(options.messages.at(-1).content,/output-token limit/);
+  return {...receipt([],'{"status":"PREPARED","content":"complete"}'),finishReason:'stop'};
+ },{messages:[{role:'user',content:'prepare exact case'}],tools:{}},{enabled:true,maxRepairs:3});
+ assert.equal(rounds,2);assert.equal(result.finishReason,'stop');assert.match(result.text,/complete/);
+});
 test('an explicitly opened exact case drains its immutable cursor receipts before model repair',async()=>{
  let rounds=0,executions=0,persisted=0;
  const result=await generateWithContinuation(async options=>{
