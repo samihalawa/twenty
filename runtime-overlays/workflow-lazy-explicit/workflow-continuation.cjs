@@ -234,11 +234,14 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       if(!input)break;
       const toolCallId='native-case-cursor-'+Date.now()+'-'+used;
       let output,synthetic;
+      const callPart={type:'tool-call',toolCallId,toolName:'execute_tool',input};
       try {
         output=await tools.execute_tool.execute(input);
-        synthetic={toolCalls:[{type:'tool-call',toolCallId,toolName:'execute_tool',input}],toolResults:[{type:'tool-result',toolCallId,toolName:'execute_tool',output}],content:[]};
+        const resultPart={type:'tool-result',toolCallId,toolName:'execute_tool',output};
+        synthetic={toolCalls:[callPart],toolResults:[resultPart],content:[callPart,resultPart]};
       } catch(error) {
-        synthetic={toolCalls:[{type:'tool-call',toolCallId,toolName:'execute_tool',input}],toolResults:[{type:'tool-error',toolCallId,toolName:'execute_tool',error:String(error)}],content:[]};
+        const errorPart={type:'tool-error',toolCallId,toolName:'execute_tool',error:String(error)};
+        synthetic={toolCalls:[callPart],toolResults:[errorPart],content:[callPart,errorPart]};
       }
       steps.push(synthetic);cursorMessages.push(...nativeResponseMessages([synthetic],''));
       await options.onStepFinish?.(synthetic);

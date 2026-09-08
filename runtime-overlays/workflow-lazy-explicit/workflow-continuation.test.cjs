@@ -105,6 +105,8 @@ test('incomplete callback receipt interrupts the model before its next step and 
   return {success:true,result:{mode:'READ_CASE',opportunityId:'case',fingerprint:'hash',cursor:2,nextCursor:null,hasNextPage:false,totalSections:4,providerPaginationComplete:true,sections:[{sourceId:'message-2'},{sourceId:'message-3'}]}};
  }}}},{enabled:true,maxToolCalls:40});
  assert.equal(rounds,2);assert.equal(drained,1);assert.equal(reachedAfterIncomplete,false);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
+ const transported=result.steps.find(step=>step.toolCalls?.[0]?.toolCallId?.startsWith('native-case-cursor-'));
+ assert.deepEqual(transported.content.map(part=>part.type),['tool-call','tool-result']);
 });
 test('same run tool budget prevents another actual tool execution',async()=>{
  let executions=0,rounds=0;
