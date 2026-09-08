@@ -272,6 +272,17 @@ test('document revision continues until canonical source and exact current artif
  assert.equal(rounds,2);assert.equal(JSON.parse(result.text).reuseArtifactId,currentId);
  assert.equal(result.steps.filter(s=>s.toolCalls?.length).length,2);
 });
+test('configured exact document evidence is preloaded once before model judgment',async()=>{
+ const personId='4deb3ea0-2672-43da-81ee-7a3f2f4a468c',artifactId='95b05199-02fa-4621-9d39-d59ffb6b063e',executed=[];let rounds=0;
+ const result=await generateWithContinuation(async options=>{
+  rounds++;const toolMessages=options.messages.filter(message=>message.role==='tool');assert.equal(toolMessages.length,2);
+  return receipt([],JSON.stringify({status:'PREPARED',artifactType:'AI_PROFILE',reuseArtifactId:artifactId,content:'Source-grounded profile'}));
+ },{messages:[{role:'user',content:'Exact current artifact to revise, if present: '+artifactId}],tools:{execute_tool:{execute:async input=>{executed.push(input);return input.toolName==='find_one_person'?{success:true,result:{id:personId,canonicalCareerEvidence:'Facts'}}:{success:true,result:{id:artifactId,artifactType:'AI_PROFILE',content:'Current profile'}};}}}},{enabled:true,responseSchema:{type:'object',properties:{status:{type:'string'},artifactType:{type:'string'},reuseArtifactId:{type:'string'},content:{type:'string'}},required:['status','artifactType','reuseArtifactId','content'],additionalProperties:false},requiredNativeReads:[
+  {preload:true,toolName:'find_one_person',argumentName:'id',argumentValue:personId,arguments:{select:['id','canonicalCareerEvidence']},outputId:personId,nonemptyOutputFields:['canonicalCareerEvidence']},
+  {preload:true,toolName:'find_one_ai_artifact_generation',argumentName:'id',argumentFromPromptPattern:'Exact current artifact to revise, if present: ([0-9a-f-]{36})',arguments:{select:['id','artifactType','content']},argumentFromResponseField:'reuseArtifactId',requireResponseField:true,outputIdMatchesArgument:true,nonemptyOutputFields:['artifactType','content']}
+ ]});
+ assert.equal(rounds,1);assert.deepEqual(executed.map(input=>input.arguments.id),[personId,artifactId]);assert.equal(result.steps.length,2);
+});
 test('invalid final structured output receives bounded same-model repair with real steps',async()=>{
  let rounds=0;const first=page(0,null);first.response={messages:[{role:'assistant',content:'actual case read'},{role:'tool',content:'all native pages'}]};
  const result=await generateWithContinuation(async options=>{

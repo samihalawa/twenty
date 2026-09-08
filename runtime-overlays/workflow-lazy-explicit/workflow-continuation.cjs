@@ -198,6 +198,14 @@ function repairLearnToolsJson(value) {
   if(repaired===value)return null;
   try{const parsed=JSON.parse(repaired);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:null;}catch{return null;}
 }
+function promptText(messages) {
+  return messages.map(message=>typeof message?.content==='string'?message.content:Array.isArray(message?.content)?message.content.filter(part=>part?.type==='text'&&typeof part.text==='string').map(part=>part.text).join('\n'):'').join('\n');
+}
+function requiredReadArgument(requirement,messages) {
+  if(typeof requirement?.argumentValue==='string')return requirement.argumentValue;
+  if(typeof requirement?.argumentFromPromptPattern!=='string')return undefined;
+  try { return promptText(messages).match(new RegExp(requirement.argumentFromPromptPattern,'m'))?.[1]; } catch { return undefined; }
+}
 async function generateWithContinuation(generateText, options, policy = {}) {
   if (!policy.enabled) return generateText(options);
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
@@ -270,6 +278,26 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     }
     return output;
   }}]));
+  // Preload only administrator-declared read-only evidence. The exact receipts
+  // are persisted and replayed to the same model. No contextual choice or
+  // business mutation is performed here.
+  if(typeof tools.execute_tool?.execute==='function')for(const requirement of policy.requiredNativeReads??[]){
+    if(requirement?.preload!==true||typeof requirement.toolName!=='string'||typeof requirement.argumentName!=='string')continue;
+    const expected=requiredReadArgument(requirement,messages);
+    if(typeof expected!=='string'||!expected.trim())continue;
+    const input={toolName:requirement.toolName,arguments:{...(requirement.arguments??{}),[requirement.argumentName]:expected}};
+    const toolCallId='native-required-read-'+Date.now()+'-'+used;
+    const callPart={type:'tool-call',toolCallId,toolName:'execute_tool',input};let synthetic;
+    try {
+      const output=await tools.execute_tool.execute(input);
+      const resultPart={type:'tool-result',toolCallId,toolName:'execute_tool',output};
+      synthetic={toolCalls:[callPart],toolResults:[resultPart],content:[callPart,resultPart]};
+    } catch(error) {
+      const errorPart={type:'tool-error',toolCallId,toolName:'execute_tool',error:String(error)};
+      synthetic={toolCalls:[callPart],toolResults:[errorPart],content:[callPart,errorPart]};
+    }
+    steps.push(synthetic);messages.push(...nativeResponseMessages([synthetic],''));await options.onStepFinish?.(synthetic);
+  }
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
     const observedSteps=[], callsBeforeRound=used;
@@ -387,4 +415,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,requiredNativeReadIssues,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson,normalizeReadOnlyFindArguments,repairLearnToolsJson};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,requiredNativeReadIssues,promptText,requiredReadArgument,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson,normalizeReadOnlyFindArguments,repairLearnToolsJson};
