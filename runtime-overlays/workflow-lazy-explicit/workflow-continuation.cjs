@@ -140,6 +140,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   const casePages = new Map();
   const protectedEvidence = new Map();
   const nativeCalls=[];
+  const learnedToolNames=new Set();
   const tools = Object.fromEntries(Object.entries(options.tools ?? {}).map(([name,tool]) => [name, !tool.execute ? tool : {...tool,execute:async (...args)=>{
     if (used >= maxCalls) throw new Error('NATIVE_TOOL_BUDGET_EXHAUSTED: preserve unfinished work for continuation');
     used++;
@@ -169,6 +170,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     let output;try{output=await tool.execute(...args);}catch(error){nativeCalls.push({name:actualName,args:actualArgs,output:{success:false,error:String(error)},ok:false});throw error;}
     const normalized=nativeOutput(output),result=normalized.value;
     nativeCalls.push({name:actualName,args:actualArgs,output,ok:normalized.ok});
+    if(actualName==='learn_tools' && normalized.ok) for(const learned of result?.tools??[]) if(typeof learned?.name==='string') learnedToolNames.add(learned.name);
     if(actualName==='find_one_opportunity' && normalized.ok) {
       const record=result?.records?.[0]??result;
       if(record?.id && typeof record.stateEvidence?.markdown==='string') try { const evidence=JSON.parse(record.stateEvidence.markdown); if(evidence && typeof evidence==='object' && !Array.isArray(evidence)) protectedEvidence.set(record.id,evidence); } catch { /* An invalid historical blob is not an invented structured admission. */ }
@@ -195,6 +197,8 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       experimental_repairToolCall:async repairInput=>{
         const match=repairInput.toolCall?.toolName?.match(/^(.+)<\|channel\|>(?:analysis|commentary|json)$/);
         if(match && Object.hasOwn(tools,match[1])) return {...repairInput.toolCall,toolName:match[1]};
+        const directName=repairInput.toolCall?.toolName,directInput=repairInput.toolCall?.input;
+        if(learnedToolNames.has(directName) && Object.hasOwn(tools,'execute_tool') && directInput && typeof directInput==='object' && !Array.isArray(directInput)) return {...repairInput.toolCall,toolName:'execute_tool',input:{toolName:directName,arguments:directInput}};
         return options.experimental_repairToolCall?.(repairInput)??null;
       },
       stopWhen: async state => used >= maxCalls || (await Promise.all(stopConditions.map(stop=>stop(state)))).some(Boolean)

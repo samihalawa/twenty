@@ -161,6 +161,16 @@ test('only exact registered tool with known malformed channel suffix is repaired
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{execute_tool:{execute:async()=>({})}}},{enabled:true});
 });
+test('a directly emitted exact learned lazy tool is repaired through execute_tool',async()=>{
+ await generateWithContinuation(async options=>{
+  await options.tools.learn_tools.execute({toolNames:['find_many_messages'],aspects:['schema']});
+  const input={messageThreadId:{eq:'thread'},offset:0,limit:5,select:['id','text']};
+  const repaired=await options.experimental_repairToolCall({toolCall:{toolName:'find_many_messages',input}});
+  assert.equal(repaired.toolName,'execute_tool');assert.deepEqual(repaired.input,{toolName:'find_many_messages',arguments:input});
+  assert.equal(await options.experimental_repairToolCall({toolCall:{toolName:'invented_delete',input}}),null);
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{learn_tools:{execute:async()=>({tools:[{name:'find_many_messages'}]})},execute_tool:{execute:async()=>({})}}},{enabled:true});
+});
 test('invalid final structured output receives bounded same-model repair with real steps',async()=>{
  let rounds=0;const first=page(0,null);first.response={messages:[{role:'assistant',content:'actual case read'},{role:'tool',content:'all native pages'}]};
  const result=await generateWithContinuation(async options=>{
