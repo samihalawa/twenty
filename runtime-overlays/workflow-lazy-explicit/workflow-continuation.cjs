@@ -174,6 +174,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   const steps = [];
   const casePages = new Map();
   const protectedEvidence = new Map();
+  const opportunityReadRevisions = new Map();
   const nativeCalls=[];
   const learnedToolNames=new Set();
   const tools = Object.fromEntries(Object.entries(options.tools ?? {}).map(([name,tool]) => [name, !tool.execute ? tool : {...tool,execute:async (...args)=>{
@@ -190,6 +191,8 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       if(Array.isArray(normalizedArgs.candidateDecisions) && !Array.isArray(normalizedArgs.evidenceJSON?.candidateDecisions)) { normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),candidateDecisions:normalizedArgs.candidateDecisions}; delete normalizedArgs.candidateDecisions; }
       for(const key of ['sourceCoverage','nextAction']) if(normalizedArgs[key]!==undefined && normalizedArgs.evidenceJSON?.[key]===undefined) { normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),[key]:normalizedArgs[key]}; delete normalizedArgs[key]; }
       if(normalizedArgs.lastReconciledAt!==undefined && normalizedArgs.evidenceJSON?.lastReconciledAt===undefined) normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),lastReconciledAt:normalizedArgs.lastReconciledAt};
+      const exactReadRevision=opportunityReadRevisions.get(normalizedArgs.id);
+      if(typeof exactReadRevision==='string') normalizedArgs.expectedUpdatedAt=exactReadRevision;
       actualArgs=normalizedArgs;
       if(name==='execute_tool') input.arguments=actualArgs;
     }
@@ -224,6 +227,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     if(actualName==='learn_tools' && normalized.ok) for(const learned of result?.tools??[]) if(typeof learned?.name==='string') learnedToolNames.add(learned.name);
     if(actualName==='find_one_opportunity' && normalized.ok) {
       const record=result?.records?.[0]??result;
+      if(record?.id && typeof record.updatedAt==='string') opportunityReadRevisions.set(record.id,record.updatedAt);
       if(record?.id && typeof record.stateEvidence?.markdown==='string') try { const evidence=JSON.parse(record.stateEvidence.markdown); if(evidence && typeof evidence==='object' && !Array.isArray(evidence)) protectedEvidence.set(record.id,evidence); } catch { /* An invalid historical blob is not an invented structured admission. */ }
     }
     if(actualName==='app_crm_case_context' && result?.mode==='READ_CASE' && normalized.ok) {

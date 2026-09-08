@@ -170,6 +170,24 @@ test('observed top-level opportunity evidence fields are normalized into the str
  assert.deepEqual(normalized.evidenceJSON,{...freshEvidence(),sourceCoverage:{...freshEvidence().sourceCoverage,fingerprint:'hash'}});
  assert.equal(normalized.sourceCoverage,undefined);assert.equal(normalized.nextAction,undefined);assert.equal(normalized.lastReconciledAt,'2026-09-08T03:50:43.454Z');
 });
+test('opportunity update binds the latest exact native read revision without weakening CAS',async()=>{
+ let exactWrite, otherWrite;
+ await generateWithContinuation(async opts=>{
+  const execute=opts.tools.execute_tool.execute;
+  await execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:0}});
+  await execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'other',cursor:0}});
+  await execute({toolName:'find_one_opportunity',arguments:{id:'case',select:['id','updatedAt']}});
+  await execute({toolName:'update_one_opportunity',arguments:{id:'case',expectedUpdatedAt:'stale',evidenceJSON:freshEvidence()}});
+  await execute({toolName:'update_one_opportunity',arguments:{id:'other',expectedUpdatedAt:'other-explicit',evidenceJSON:freshEvidence()}});
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{execute_tool:{execute:async input=>{
+  if(input.toolName==='app_crm_case_context')return {success:true,result:{mode:'READ_CASE',opportunityId:input.arguments.opportunityId,cursor:0,nextCursor:null,hasNextPage:false,totalSections:0,fingerprint:'hash',sections:[]}};
+  if(input.toolName==='find_one_opportunity')return {success:true,result:{records:[{id:'case',updatedAt:'2026-09-08T04:25:56.842Z'}]}};
+  if(input.toolName==='update_one_opportunity'){if(input.arguments.id==='case')exactWrite=input.arguments;else otherWrite=input.arguments;return {success:true,result:{id:input.arguments.id}};}
+ }}}},{enabled:true});
+ assert.equal(exactWrite.expectedUpdatedAt,'2026-09-08T04:25:56.842Z');
+ assert.equal(otherWrite.expectedUpdatedAt,'other-explicit');
+});
 test('only exact registered tool with known malformed channel suffix is repaired',async()=>{
  const input='{ "id": "exact" }';
  await generateWithContinuation(async options=>{
