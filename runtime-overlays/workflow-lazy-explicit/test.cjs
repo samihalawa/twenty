@@ -591,12 +591,33 @@ await test('native parse recovery accepts only bounded schema-valid text and pre
  const {recoverStructuredParse}=require('./schema-validation.cjs'),validate=compileResponseSchema(exactSchema);
  const steps=[{toolCalls:[{toolName:'read'}]}],error={text:'\x60\x60\x60json\n{"runStatus":"PARTIAL","processed":1}\n\x60\x60\x60',finishReason:'stop',usage};
  const r=recoverStructuredParse(error,validate,true,steps);
- assert.equal(r.steps,steps);assert.equal(r.usage,usage);assert.equal(r.text,error.text);
+ assert.equal(r.steps,steps);assert.equal(r.usage,usage);
  const wrapped={...error,text:'Exact structured result follows.\n{"runStatus":"PARTIAL","processed":1}\nEnd.'};
- assert.equal(recoverStructuredParse(wrapped,validate,true,steps).text,wrapped.text);
+ assert.equal(r.text,'{"runStatus":"PARTIAL","processed":1}');
+ assert.equal(recoverStructuredParse(wrapped,validate,true,steps).text,'{"runStatus":"PARTIAL","processed":1}');
  for(const e of [{...error,text:'{"runStatus":'}, {...error,text:'{"runStatus":"PARTIAL"}'}, {...error,text:'ordinary prose'}, {...error,text:' '.repeat(262145)}, {...error,finishReason:'length'}]) assert.throws(()=>recoverStructuredParse(e,validate,true),x=>x===e);
  assert.throws(()=>recoverStructuredParse(error,validate,false),x=>x===error);
  assert.throws(()=>recoverStructuredParse(error,undefined,true),x=>x===error);
+});
+
+await test('native parse recovery validates final output retained only in completed step channels',async()=>{
+ const {recoverStructuredParse}=require('./schema-validation.cjs'),validate=compileResponseSchema(exactSchema);
+ const value={runStatus:'PARTIAL',processed:1},json=JSON.stringify(value),error={text:'',finishReason:'stop',usage};
+ for(const steps of [
+  [{text:'',reasoningText:json}],
+  [{content:[{type:'reasoning',text:json}]}],
+  [{response:{messages:[{role:'assistant',content:[{type:'reasoning',text:json}]}]}}],
+  [{response:{body:{choices:[{message:{content:'',reasoning_content:json}}]}}}]
+ ]){
+  const recovered=recoverStructuredParse(error,validate,true,steps,true);
+  assert.deepEqual(JSON.parse(recovered.text),value);
+  assert.equal(recovered.nativeValidationError,undefined);
+ }
+ const invalid=recoverStructuredParse(error,validate,true,[{reasoningText:'unfinished'}],true);
+ assert.match(invalid.nativeValidationError,/step\.reasoningText: The provider final response contains no complete JSON object/);
+ assert.match(invalid.nativeValidationError,/step\.reasoningText=10B/);
+ const ambiguous=recoverStructuredParse(error,validate,true,[{text:json,reasoningText:'{"runStatus":"PARTIAL","processed":2}'}],true);
+ assert.match(ambiguous.nativeValidationError,/multiple different schema-valid final objects/);
 });
 
 await test('metadata execution uses authenticated user identity and ignores actor values in payload',async()=>{

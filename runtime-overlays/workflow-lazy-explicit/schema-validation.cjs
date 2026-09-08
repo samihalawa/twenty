@@ -83,17 +83,56 @@ function diagnoseInvalidResponse(text, validate) {
   return 'The provider final response contains valid JSON with unsupported surrounding content.';
 }
 
-function recoverStructuredParse(error, validate, isNoObjectError, steps = [], allowRepair = false) {
-  if (!isNoObjectError || !validate || error.finishReason === 'length' ||
-      typeof error.text !== 'string' || Buffer.byteLength(error.text, 'utf8') > 262144) throw error;
-  let checked;
-  let validationError;
-  try { checked = parseValidatedResponse(error.text, validate); } catch (problem) { validationError=problem.message; }
-  if (!checked?.success) {
-    if(!allowRepair)throw error;
-    return {text:error.text,usage:error.usage,finishReason:error.finishReason,steps,nativeValidationError:validationError??diagnoseInvalidResponse(error.text,validate)};
+function structuredOutputCandidates(error, steps = []) {
+  const candidates=[];
+  const add=(channel,value)=>{
+    if(typeof value!=='string'||!value.trim()||Buffer.byteLength(value,'utf8')>262144)return;
+    candidates.push({channel,text:value});
+  };
+  add('error.text',error?.text);
+  for(const step of [...steps].reverse()){
+    add('step.text',step?.text);
+    add('step.reasoningText',step?.reasoningText);
+    for(const part of Array.isArray(step?.content)?step.content:[])if(part?.type==='text'||part?.type==='reasoning')add('step.content.'+part.type,part.text);
+    for(const message of Array.isArray(step?.response?.messages)?step.response.messages:[]){
+      if(message?.role!=='assistant')continue;
+      if(typeof message.content==='string')add('response.messages.content',message.content);
+      for(const part of Array.isArray(message.content)?message.content:[])if(part?.type==='text'||part?.type==='reasoning')add('response.messages.'+part.type,part.text);
+    }
+    const body=step?.response?.body;
+    for(const choice of Array.isArray(body?.choices)?body.choices:[]){
+      add('response.body.content',choice?.message?.content);
+      add('response.body.reasoning',choice?.message?.reasoning);
+      add('response.body.reasoning_content',choice?.message?.reasoning_content);
+    }
   }
-  return {text: error.text, usage: error.usage, finishReason: error.finishReason, steps};
+  const unique=new Map();
+  for(const candidate of candidates)if(!unique.has(candidate.text))unique.set(candidate.text,candidate);
+  return [...unique.values()];
 }
 
-module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError, diagnoseInvalidResponse, recoverStructuredParse};
+function recoverStructuredParse(error, validate, isNoObjectError, steps = [], allowRepair = false) {
+  if (!isNoObjectError || !validate || error.finishReason === 'length') throw error;
+  const candidates=structuredOutputCandidates(error,steps);
+  const valid=new Map();
+  const failures=[];
+  for(const candidate of candidates){
+    try {
+      const checked=parseValidatedResponse(candidate.text,validate);
+      if(checked?.success)valid.set(JSON.stringify(checked.value),checked.value);
+      else failures.push(candidate.channel+': '+diagnoseInvalidResponse(candidate.text,validate));
+    } catch(problem) { failures.push(candidate.channel+': '+problem.message); }
+  }
+  if(valid.size===1) {
+    const value=[...valid.values()][0];
+    return {text:JSON.stringify(value),usage:error.usage,finishReason:error.finishReason,steps};
+  }
+  if(valid.size!==1) {
+    if(!allowRepair)throw error;
+    const observed=candidates.length?candidates.map(candidate=>candidate.channel+'='+Buffer.byteLength(candidate.text,'utf8')+'B').join(', '):'none';
+    const reason=valid.size>1?'The provider returned multiple different schema-valid final objects.':failures[0]??'The provider returned no final JSON text.';
+    return {text:typeof error.text==='string'?error.text:'',usage:error.usage,finishReason:error.finishReason,steps,nativeValidationError:reason+' Observed output channels: '+observed+'.'};
+  }
+}
+
+module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError, diagnoseInvalidResponse, structuredOutputCandidates, recoverStructuredParse};
