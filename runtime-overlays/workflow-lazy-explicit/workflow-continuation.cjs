@@ -330,7 +330,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
     const observedSteps=[], callsBeforeRound=used;
-    let result = await generateText({...options, tools: finalizeWithoutTools ? {} : tools, messages,
+    let result = await generateText({...options, tools, toolChoice: finalizeWithoutTools ? 'none' : options.toolChoice, messages,
       onStepFinish:async step=>{
         observedSteps.push(step);
         await options.onStepFinish?.(step);
@@ -407,11 +407,12 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       issue.startsWith('Final response validation failed:')
     );
     // AI SDK structured output is a separate generation step after tool use.
-    // Some OpenAI-compatible providers return an empty stop response when that
-    // step is still sent with tool definitions. Once all native contracts are
-    // satisfied, retry only the schema-bound final response without tools.
-    // The complete native receipts remain in `messages`; no judgment or source
-    // content is replaced, and any unresolved tool contract keeps tools enabled.
+    // Some OpenAI-compatible providers return an empty stop response when the
+    // model attempts another tool transition during final schema generation.
+    // Once all native contracts are satisfied, retain the definitions required
+    // to interpret prior tool receipts but explicitly prohibit another call.
+    // No judgment or source content is replaced, and any unresolved native
+    // contract keeps ordinary tool choice enabled.
     if(responseOnlyRepair) finalizeWithoutTools = true;
     const originalMessages = JSON.parse(JSON.stringify(result.response?.messages?.length ? result.response.messages : nativeResponseMessages(roundSteps.length?roundSteps:observedSteps,result.text)));
     const cursorMessages=[];
@@ -457,7 +458,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     // is actually exhausted.
     const stopReason=policy.shouldContinue?.()===false?'CREDITS_UNAVAILABLE':used>=maxCalls||checked.calls>=maxCalls?'TOOL_BUDGET_EXHAUSTED':stalledRounds>maxRepairs?'NO_PROGRESS_REPAIR_LIMIT_REACHED':null;
     if (stopReason) {
-      const finalizationShape=finalizeWithoutTools?' [finalization=no-tools-default-stop; observedSteps='+(roundSteps.length||observedSteps.length)+'; finish='+String(result.finishReason??'unknown')+']':'';
+      const finalizationShape=finalizeWithoutTools?' [finalization=tool-choice-none-default-stop; observedSteps='+(roundSteps.length||observedSteps.length)+'; finish='+String(result.finishReason??'unknown')+']':'';
       return {...result,nativeExecutionError:stopReason+finalizationShape+': '+checked.issues.join('; '),text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+finalizationShape+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
     }
     const skeleton=policy.responseSchema ? JSON.stringify(schemaSkeleton(policy.responseSchema)) : '';

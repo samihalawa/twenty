@@ -455,7 +455,7 @@ test('validated AI SDK structured output is canonical when provider text is empt
  assert.equal(result.text,JSON.stringify(exact));
 });
 
-test('empty structured stop after completed native reads retries final schema response without tools',async()=>{
+test('empty structured stop after completed native reads retries final schema response with tool choice none',async()=>{
  const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
  const exact={status:'PREPARED',content:'Verified public content'};
  let rounds=0;
@@ -466,7 +466,8 @@ test('empty structured stop after completed native reads retries final schema re
    assert.equal(typeof options.stopWhen,'function');
    return {text:'',steps:[],finishReason:'stop',usage:{},nativeValidationError:'The provider returned no final JSON text.'};
   }
-  assert.equal(Object.keys(options.tools).length,0);
+  assert.equal(Object.keys(options.tools).length,1);
+  assert.equal(options.toolChoice,'none');
   assert.equal(options.stopWhen,undefined);
   return {text:'',output:exact,steps:[],finishReason:'stop',usage:{}};
  },{messages:[{role:'user',content:'prepare exact case'}],tools:{execute_tool:{}}},{enabled:true,responseSchema:schema,requireOperatorStatus:true,maxRepairs:2});
@@ -481,6 +482,7 @@ test('empty structured stop keeps tools when a native contract is unresolved',as
  const result=await generateWithContinuation(async options=>{
   rounds++;
   assert.equal(Object.keys(options.tools).length,1);
+  assert.equal(options.toolChoice,undefined);
   assert.equal(typeof options.stopWhen,'function');
   if(rounds===1)return {text:'',steps:[step('find_one_document',{id:'doc'},{error:'temporary read failure'},false)],finishReason:'stop',usage:{},nativeValidationError:'The provider returned no final JSON text.'};
   return {text:JSON.stringify(exact),steps:[step('find_one_document',{id:'doc'},{id:'doc'})],finishReason:'stop',usage:{}};
