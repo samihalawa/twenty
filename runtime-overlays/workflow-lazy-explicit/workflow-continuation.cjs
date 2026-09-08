@@ -66,7 +66,9 @@ function downgradeIncompleteNoWork(text, checked) {
     /^Independent native execution verification: NO_WORK requires full native content and an explicit ignored disposition for every discovered candidate$/,
     /^Independent native execution verification: Discovered message content not read: /,
     /^Independent native execution verification: Discovered calendar event details not read: /,
-    /^Independent native execution verification: Discovered calendar event participants not read: /
+    /^Independent native execution verification: Discovered calendar event participants not read: /,
+    /^Independent native execution verification: Meeting discovery did not perform a bounded call-recording search$/,
+    /^Independent native execution verification: Discovered call recording content not read: /
   ];
   if(checked.issues.some(issue=>!allowed.some(pattern=>pattern.test(issue))))return null;
   return value.replace(/(STATUS\s*:\s*)NO_WORK\b/,'$1ATTEMPTED_UNVERIFIED')+'\nNATIVE_EXECUTION_PENDING: '+checked.issues.join('; ')+'\nPreviously read native source pages remain available to the next scheduled continuation.';

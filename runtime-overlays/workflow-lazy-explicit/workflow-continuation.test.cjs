@@ -221,9 +221,19 @@ test('meeting outcome cannot finalize before every discovered event and particip
  const first=[discovery,step('find_one_calendar_event',{id:'event-1'},events[0]),step('find_many_calendar_event_participants',{and:[{calendarEventId:{eq:'event-1'}}]},{records:[],hasNextPage:false})];
  let issues=inspectContinuation(first,'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: opportunity link');
  assert.ok(issues.issues.some(x=>x.includes('event-2')));
- const complete=[...first,step('find_one_calendar_event',{id:'event-2'},events[1]),step('find_many_calendar_event_participants',{and:[{calendarEventId:{eq:'event-2'}}]},{records:[],hasNextPage:false})];
+ const recordings=step('find_many_call_recordings',{and:[{startedAt:{gte:'2026-09-01T01:00:00Z'}},{startedAt:{lt:'2026-09-08T01:00:00Z'}}],offset:0,limit:3},{records:[],count:0,hasNextPage:false});
+ const complete=[...first,step('find_one_calendar_event',{id:'event-2'},events[1]),step('find_many_calendar_event_participants',{and:[{calendarEventId:{eq:'event-2'}}]},{records:[],hasNextPage:false}),recordings];
  issues=inspectContinuation(complete,'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: opportunity link');
  assert.deepEqual(issues.issues,[]);
+});
+
+test('meeting outcome cannot finalize before recording discovery and returned recording content reads',()=>{
+ const events=step('find_many_calendar_events',{and:[{startsAt:{gte:'2026-09-08T01:00:00Z'}}],offset:0,limit:5},{records:[],count:0,hasNextPage:false});
+ assert.ok(inspectContinuation([events],'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: opportunity link').issues.some(x=>x.includes('bounded call-recording search')));
+ const recordings=step('find_many_call_recordings',{and:[{startedAt:{gte:'2026-09-01T01:00:00Z'}},{startedAt:{lt:'2026-09-08T01:00:00Z'}}],offset:0,limit:3},{records:[{id:'recording'}],count:1,hasNextPage:false});
+ assert.ok(inspectContinuation([events,recordings],'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: transcript link').issues.some(x=>x.includes('recording content')));
+ const read=step('find_one_call_recording',{id:'recording'},{id:'recording',transcript:{segments:[]}});
+ assert.deepEqual(inspectContinuation([events,recordings,read],'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: transcript link').issues,[]);
 });
 
 test('inbox outcome cannot finalize before every discovered message body is opened',()=>{

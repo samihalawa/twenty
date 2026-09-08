@@ -126,7 +126,7 @@ function inspectOperatorExecution(run, agentStepId) {
   const problems = [];
   if (status === "NEEDS_EVIDENCE" && /MISSING_EVIDENCE\s*:\s*(?:none|nothing|no missing evidence)\b/i.test(report.replace(/\*\*/g, ""))) problems.push("NEEDS_EVIDENCE contradicts an explicitly empty missing-evidence list");
   if (!["COMPLETED", "NO_WORK", "NEEDS_EVIDENCE", "ENTITY_CONFLICT", "TOOLING_BLOCKED", "ATTEMPTED_UNVERIFIED"].includes(status ?? "")) problems.push("Agent business status is " + (status ?? "missing"));
-  const sources = ["messages", "calendar_events", "interactions"];
+  const sources = ["messages", "calendar_events", "call_recordings", "interactions"];
   const sourceReads = reads.filter((c) => sources.some((s) => c.name === "find_many_" + s));
   const finalizedDiscovery = ["COMPLETED", "NO_WORK", "NEEDS_EVIDENCE", "ENTITY_CONFLICT"].includes(status ?? "");
   const recordsOf = (c) => {
@@ -135,6 +135,7 @@ function inspectOperatorExecution(run, agentStepId) {
     return Array.isArray(result2?.records) ? result2.records : result2?.id ? [result2] : [];
   };
   if (finalizedDiscovery) {
+    if (sourceReads.some((source) => source.name === "find_many_calendar_events") && !sourceReads.some((source) => source.name === "find_many_call_recordings" && (source.args?.startedAt || source.args?.and))) problems.push("Meeting discovery did not perform a bounded call-recording search");
     for (const source of sourceReads) {
       for (const row of recordsOf(source)) {
         if (source.name === "find_many_messages" && typeof row.text !== "string" && !reads.some((read) => read.name === "find_one_message" && read.args?.id === row.id && recordsOf(read).some((record) => record.id === row.id && typeof record.text === "string"))) problems.push("Discovered message content not read: " + row.id);
@@ -142,6 +143,7 @@ function inspectOperatorExecution(run, agentStepId) {
           if (!reads.some((read) => read.name === "find_one_calendar_event" && read.args?.id === row.id && recordsOf(read).some((record) => record.id === row.id))) problems.push("Discovered calendar event details not read: " + row.id);
           if (!reads.some((read) => /^find_(one|many)_calendar_event_participants$/.test(read.name) && JSON.stringify(read.args ?? {}).includes(row.id))) problems.push("Discovered calendar event participants not read: " + row.id);
         }
+        if (source.name === "find_many_call_recordings" && !reads.some((read) => read.name === "find_one_call_recording" && read.args?.id === row.id && recordsOf(read).some((record) => record.id === row.id))) problems.push("Discovered call recording content not read: " + row.id);
       }
     }
   }
@@ -153,7 +155,7 @@ function inspectOperatorExecution(run, agentStepId) {
   if (status === "TOOLING_BLOCKED" && !calls.some((c) => !c.ok)) problems.push("TOOLING_BLOCKED has no failed native tool call");
   if (status === "ATTEMPTED_UNVERIFIED" && !calls.length) problems.push("ATTEMPTED_UNVERIFIED has no native tool call");
   if (status === "NO_WORK") {
-    const bounded = sourceReads.filter((c) => c.args?.receivedAt || c.args?.occurredAt || c.args?.startsAt || c.args?.and);
+    const bounded = sourceReads.filter((c) => c.args?.receivedAt || c.args?.occurredAt || c.args?.startsAt || c.args?.startedAt || c.args?.and);
     if (!bounded.length) problems.push("NO_WORK has no bounded source search");
     if (bounded.some((c) => c.output?.result?.hasNextPage !== false)) problems.push("NO_WORK discovery pagination is incomplete");
     const acknowledgements = [];
