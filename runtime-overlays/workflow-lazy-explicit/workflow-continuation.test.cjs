@@ -168,7 +168,7 @@ test('observed top-level opportunity evidence fields are normalized into the str
   return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor:0,nextCursor:null,hasNextPage:false,totalSections:0,fingerprint:'hash',sections:[]}};
  }}}},{enabled:true});
  assert.deepEqual(normalized.evidenceJSON,{...freshEvidence(),sourceCoverage:{...freshEvidence().sourceCoverage,fingerprint:'hash'}});
- assert.equal(normalized.sourceCoverage,undefined);assert.equal(normalized.nextAction,undefined);assert.equal(normalized.lastReconciledAt,undefined);
+ assert.equal(normalized.sourceCoverage,undefined);assert.equal(normalized.nextAction,undefined);assert.equal(normalized.lastReconciledAt,'2026-09-08T03:50:43.454Z');
 });
 test('only exact registered tool with known malformed channel suffix is repaired',async()=>{
  const input='{ "id": "exact" }';
