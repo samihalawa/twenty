@@ -212,6 +212,10 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   const structuredValidation = policy.responseSchema ? require('./schema-validation.cjs') : null;
   const validateStructured = structuredValidation?.compileResponseSchema(policy.responseSchema) ?? null;
   let used = 0, stalledRounds = 0, usage = {}, messages = [...(options.messages ?? [])];
+  policy={...policy,requiredNativeReads:(policy.requiredNativeReads??[]).map(requirement=>{
+    const resolved=requiredReadArgument(requirement,messages);
+    return typeof resolved==='string'&&resolved.trim()?{...requirement,argumentValue:resolved}:requirement;
+  })};
   const steps = [];
   const casePages = new Map();
   const protectedEvidence = new Map();
@@ -300,6 +304,28 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     // objects are valid in Twenty records and invalid in ModelMessage content.
     const wireSynthetic=JSON.parse(JSON.stringify(synthetic));
     steps.push(synthetic);messages.push(...nativeResponseMessages([wireSynthetic],''));await options.onStepFinish?.(synthetic);
+    // An administrator-preloaded exact case is already bound before model
+    // judgment. Drain only that immutable cursor transport now so the first
+    // model response sees one complete snapshot, instead of answering from a
+    // first page and then trying to rewrite a partial response.
+    if(requirement.toolName==='app_crm_case_context')while(used<maxCalls){
+      const state=casePages.get(expected);
+      if(!state||state.complete||!state.nextRead)break;
+      const continuationInput=state.nextRead;
+      const continuationCallId='native-required-case-'+Date.now()+'-'+used;
+      const continuationCall={type:'tool-call',toolCallId:continuationCallId,toolName:'execute_tool',input:continuationInput};let continuationStep;
+      try {
+        const continuationOutput=await tools.execute_tool.execute(continuationInput);
+        const continuationResult={type:'tool-result',toolCallId:continuationCallId,toolName:'execute_tool',output:continuationOutput};
+        continuationStep={toolCalls:[continuationCall],toolResults:[continuationResult],content:[continuationCall,continuationResult]};
+      } catch(error) {
+        const continuationError={type:'tool-error',toolCallId:continuationCallId,toolName:'execute_tool',error:String(error)};
+        continuationStep={toolCalls:[continuationCall],toolResults:[continuationError],content:[continuationCall,continuationError]};
+      }
+      const wireContinuation=JSON.parse(JSON.stringify(continuationStep));
+      steps.push(continuationStep);messages.push(...nativeResponseMessages([wireContinuation],''));await options.onStepFinish?.(continuationStep);
+      if(continuationStep.toolResults[0].type==='tool-error')break;
+    }
   }
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];

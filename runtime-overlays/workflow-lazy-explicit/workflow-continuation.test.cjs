@@ -283,6 +283,18 @@ test('configured exact document evidence is preloaded once before model judgment
  ]});
  assert.equal(rounds,1);assert.deepEqual(executed.map(input=>input.arguments.id),[personId,artifactId]);assert.equal(result.steps.length,2);
 });
+test('configured exact case preload drains every immutable cursor before first judgment',async()=>{
+ const opportunityId='0fd5ed8b-20e6-41b2-acf9-9716fa6d7088',executed=[];let rounds=0;
+ const responseSchema={type:'object',properties:{status:{type:'string'},sourceFingerprint:{type:'string'}},required:['status','sourceFingerprint'],additionalProperties:false};
+ const result=await generateWithContinuation(async options=>{
+  rounds++;assert.equal(options.messages.filter(message=>message.role==='tool').length,2);
+  return receipt([],JSON.stringify({status:'PREPARED',sourceFingerprint:'case-fingerprint'}));
+ },{messages:[{role:'user',content:'Exact opportunity ID: '+opportunityId}],tools:{execute_tool:{execute:async input=>{
+  executed.push(input);const cursor=input.arguments.cursor??0;
+  return {success:true,result:{mode:'READ_CASE',opportunityId,fingerprint:'case-fingerprint',cursor,nextCursor:cursor===0?1:null,hasNextPage:cursor===0,totalSections:2,providerPaginationComplete:true,sections:[{sourceType:'EXACT_CASE_IDENTITY',sourceId:'source-'+cursor,offset:0,totalCharacters:2,text:'{}'}]}};
+ }}}},{enabled:true,responseSchema,requiredNativeReads:[{preload:true,toolName:'app_crm_case_context',argumentName:'opportunityId',argumentFromPromptPattern:'Exact opportunity ID: ([0-9a-f-]{36})',arguments:{mode:'READ_CASE',cursor:0}}]});
+ assert.equal(rounds,1);assert.deepEqual(executed.map(input=>input.arguments.cursor),[0,1]);assert.equal(result.steps.length,2);
+});
 test('invalid final structured output receives bounded same-model repair with real steps',async()=>{
  let rounds=0;const first=page(0,null);first.response={messages:[{role:'assistant',content:'actual case read'},{role:'tool',content:'all native pages'}]};
  const result=await generateWithContinuation(async options=>{
