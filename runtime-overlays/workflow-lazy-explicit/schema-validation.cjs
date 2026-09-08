@@ -127,16 +127,16 @@ function structuredOutputShape(error,steps=[]){
   const responseShape=response=>{
     let body=response?.body;
     if(typeof body==='string'&&Buffer.byteLength(body,'utf8')<=1048576)try{body=JSON.parse(body);}catch{}
-    return {present:!!response,keys:response&&typeof response==='object'?Object.keys(response).sort():[],bodyType:Array.isArray(body)?'array':typeof body,choices:Array.isArray(body?.choices)?body.choices.map(choice=>({finishReason:choice?.finish_reason??null,messageKeys:choice?.message&&typeof choice.message==='object'?Object.keys(choice.message).sort():[]})):[]};
+    return {present:!!response,bodyType:Array.isArray(body)?'array':typeof body,choices:Array.isArray(body?.choices)?body.choices.map(choice=>({finish:choice?.finish_reason??null,contentType:choice?.message?.content===null?'null':typeof choice?.message?.content,contentBytes:typeof choice?.message?.content==='string'?Buffer.byteLength(choice.message.content,'utf8'):null,reasoningType:choice?.message?.reasoning===null?'null':typeof choice?.message?.reasoning,reasoningBytes:typeof choice?.message?.reasoning==='string'?Buffer.byteLength(choice.message.reasoning,'utf8'):null,toolCalls:Array.isArray(choice?.message?.tool_calls)?choice.message.tool_calls.length:0})):[]};
   };
   const itemShape=item=>({
-    keys:item&&typeof item==='object'?Object.keys(item).sort():[],finishReason:item?.finishReason??null,rawFinishReason:item?.rawFinishReason??null,
+    finish:item?.finishReason??null,raw:item?.rawFinishReason??null,
     textBytes:typeof item?.text==='string'?Buffer.byteLength(item.text,'utf8'):null,reasoningBytes:typeof item?.reasoningText==='string'?Buffer.byteLength(item.reasoningText,'utf8'):null,
     outputType:item?.output===null?'null':Array.isArray(item?.output)?'array':typeof item?.output,
     contentTypes:Array.isArray(item?.content)?item.content.map(part=>part?.type??typeof part):[],toolCalls:Array.isArray(item?.toolCalls)?item.toolCalls.length:null,toolResults:Array.isArray(item?.toolResults)?item.toolResults.length:null,
     response:responseShape(item?.response)
   });
-  return JSON.stringify({error:itemShape(error),steps:steps.slice(-4).map(itemShape)});
+  return JSON.stringify({steps:steps.slice(-4).map(itemShape),error:itemShape(error)});
 }
 
 function recoverStructuredParse(error, validate, isNoObjectError, steps = [], allowRepair = false) {
