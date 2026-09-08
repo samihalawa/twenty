@@ -20,6 +20,36 @@ function nativeOutput(output) {
   }
   return {value,error,ok};
 }
+function recordOf(output) {
+  const value=nativeOutput(output).value;
+  return Array.isArray(value?.records)&&value.records.length===1?value.records[0]:value;
+}
+// Administrator-configured, read-only evidence contracts. These make a
+// missing exact source read a same-agent continuation instead of allowing a
+// downstream transaction to fail after the model has already stopped.
+function requiredNativeReadIssues(calls,finalObject,requirements) {
+  if(!finalObject||!Array.isArray(requirements)||!requirements.length)return [];
+  const issues=[];
+  for(const requirement of requirements){
+    if(!requirement||typeof requirement!=='object'||typeof requirement.toolName!=='string')continue;
+    let expected=requirement.argumentValue;
+    if(typeof requirement.argumentFromResponseField==='string')expected=finalObject[requirement.argumentFromResponseField];
+    if(requirement.requireResponseField===true&&(typeof expected!=='string'||!expected.trim())){
+      issues.push('Required source binding '+requirement.argumentFromResponseField+' is empty. Preserve the exact current record ID supplied by the workflow; do not substitute another artifact or historical source.');
+      continue;
+    }
+    const matching=calls.filter(call=>call.ok&&call.name===requirement.toolName&&(requirement.argumentName===undefined||call.args?.[requirement.argumentName]===expected));
+    const accepted=matching.some(call=>{
+      const record=recordOf(call.output);
+      if(requirement.outputIdMatchesArgument===true&&record?.id!==expected)return false;
+      if(typeof requirement.outputId==='string'&&record?.id!==requirement.outputId)return false;
+      if(Array.isArray(requirement.nonemptyOutputFields)&&requirement.nonemptyOutputFields.some(field=>typeof record?.[field]!=='string'||!record[field].trim()))return false;
+      return true;
+    });
+    if(!accepted)issues.push(String(requirement.instruction||('Before returning the final result, make the required successful native '+requirement.toolName+' read'+(expected?' for exact ID '+expected:'')+' and use its actual returned record.')));
+  }
+  return issues;
+}
 function recordCasePages(step, casePages) {
   let foundIncomplete = false;
   const events=nativeToolEvents(step);
@@ -53,6 +83,7 @@ function inspectContinuation(steps, text, requirements={}) {
   if(requirements.requireOperatorStatus && !/STATUS\s*[:*\s]+[A-Z_]+\b/.test(String(text).replace(/\*\*/g,'')) && typeof finalObject?.status!=='string') issues.push('Final report is missing the required explicit status. Continue the same task and return a complete status-bound result after the pending native operations.');
   const lastFailed=calls.findLast(c=>!c.ok);
   if(lastFailed && !calls.slice(calls.indexOf(lastFailed)+1).some(c=>c.ok && c.name===lastFailed.name) && !/STATUS\s*:\s*(?:TOOLING_BLOCKED|NEEDS_EVIDENCE)/.test(String(text))) issues.push('A native tool call failed or its arguments could not be parsed: '+String(lastFailed.name??lastFailed.nativeName)+'. Exact error: '+String(lastFailed.error??'missing successful tool result').slice(0,1600)+'. Use the learned schema, retry only an operation proven not executed, or report the exact tooling/evidence block.');
+  issues.push(...requiredNativeReadIssues(calls,finalObject,requirements.requiredNativeReads));
   for (const call of calls) if(call.ok && call.name==='app_crm_case_context' && call.output?.mode==='READ_CASE')pages.set(call.output.opportunityId,trackCoverage(pages.get(call.output.opportunityId),call.output));
   for(const [id,state] of pages)if(!state.complete)issues.push('Unread source pages for '+id+'. Continue exact native cursor without copying the machine fingerprint: '+JSON.stringify({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:id,cursor:state.next}}));
   if(finalObject&&Object.hasOwn(finalObject,'sourceFingerprint'))for(const state of pages.values())if(state.complete)try{verifySelectedCandidateReads([...state.sections.values()],calls.map(c=>({...c,output:{result:c.output}})),finalObject.candidateDecisions);}catch(error){issues.push(error.message+': choose relevance for every indexed candidate and read every full selected thread before completing the structured response.');}
@@ -356,4 +387,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson,normalizeReadOnlyFindArguments,repairLearnToolsJson};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,requiredNativeReadIssues,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson,normalizeReadOnlyFindArguments,repairLearnToolsJson};

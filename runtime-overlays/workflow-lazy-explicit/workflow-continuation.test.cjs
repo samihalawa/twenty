@@ -251,6 +251,27 @@ test('operator continuation rejects a provisional sentence without an explicit s
  },{tools:{}},{enabled:true,requireOperatorStatus:true});
  assert.equal(rounds,2);assert.match(result.text,/NEEDS_EVIDENCE/);
 });
+test('document revision continues until canonical source and exact current artifact are read',async()=>{
+ const schema={type:'object',properties:{status:{type:'string'},artifactType:{type:'string'},reuseArtifactId:{type:'string'},content:{type:'string'}},required:['status','artifactType','reuseArtifactId','content'],additionalProperties:false};
+ const stale={status:'PREPARED',artifactType:'MEETING_BRIEF',reuseArtifactId:'',content:'Unsupported historical substitute'};
+ const currentId='95b05199-02fa-4621-9d39-d59ffb6b063e',personId='4deb3ea0-2672-43da-81ee-7a3f2f4a468c';let rounds=0;
+ const policy={enabled:true,responseSchema:schema,requiredNativeReads:[
+  {toolName:'find_one_person',argumentName:'id',argumentValue:personId,outputId:personId,nonemptyOutputFields:['canonicalCareerEvidence'],instruction:'Read the exact canonical career source before preparing public content.'},
+  {toolName:'find_one_ai_artifact_generation',argumentName:'id',argumentFromResponseField:'reuseArtifactId',requireResponseField:true,outputIdMatchesArgument:true,nonemptyOutputFields:['content','artifactType'],instruction:'Read the exact current artifact bound by reuseArtifactId and preserve its purpose.'}
+ ]};
+ const result=await generateWithContinuation(async options=>{
+  if(++rounds===1)return receipt([],JSON.stringify(stale));
+  assert.match(options.messages.at(-1).content,/reuseArtifactId is empty/);
+  const person=await options.tools.execute_tool.execute({toolName:'find_one_person',arguments:{id:personId}});
+  const artifact=await options.tools.execute_tool.execute({toolName:'find_one_ai_artifact_generation',arguments:{id:currentId}});
+  return receipt([
+   step('find_one_person',{id:personId},person.result),
+   step('find_one_ai_artifact_generation',{id:currentId},artifact.result)
+  ],JSON.stringify({status:'PREPARED',artifactType:'AI_PROFILE',reuseArtifactId:currentId,content:'Current source-grounded profile'}));
+ },{tools:{execute_tool:{execute:async input=>input.toolName==='find_one_person'?{success:true,result:{id:personId,canonicalCareerEvidence:'Verified facts'}}:{success:true,result:{id:currentId,artifactType:'AI_PROFILE',content:'Current profile'}}}}},policy);
+ assert.equal(rounds,2);assert.equal(JSON.parse(result.text).reuseArtifactId,currentId);
+ assert.equal(result.steps.filter(s=>s.toolCalls?.length).length,2);
+});
 test('invalid final structured output receives bounded same-model repair with real steps',async()=>{
  let rounds=0;const first=page(0,null);first.response={messages:[{role:'assistant',content:'actual case read'},{role:'tool',content:'all native pages'}]};
  const result=await generateWithContinuation(async options=>{
