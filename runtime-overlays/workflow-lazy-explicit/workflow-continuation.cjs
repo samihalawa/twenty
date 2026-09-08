@@ -211,7 +211,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
   const structuredValidation = policy.responseSchema ? require('./schema-validation.cjs') : null;
   const validateStructured = structuredValidation?.compileResponseSchema(policy.responseSchema) ?? null;
-  let used = 0, stalledRounds = 0, usage = {}, messages = [...(options.messages ?? [])];
+  let used = 0, stalledRounds = 0, usage = {}, messages = [...(options.messages ?? [])], finalizeWithoutTools = false;
   policy={...policy,requiredNativeReads:(policy.requiredNativeReads??[]).map(requirement=>{
     const resolved=requiredReadArgument(requirement,messages);
     return typeof resolved==='string'&&resolved.trim()?{...requirement,argumentValue:resolved}:requirement;
@@ -330,7 +330,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
     const observedSteps=[], callsBeforeRound=used;
-    let result = await generateText({...options, tools, messages,
+    let result = await generateText({...options, tools: finalizeWithoutTools ? {} : tools, messages,
       onStepFinish:async step=>{
         observedSteps.push(step);
         await options.onStepFinish?.(step);
@@ -398,6 +398,17 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     stalledRounds = used > callsBeforeRound ? 0 : stalledRounds + 1;
     if(result.finishReason === 'length') checked.issues.push('The previous response reached the fixed output-token limit and is incomplete. Return one concise valid final response matching the original schema; retain the existing native reads and do not repeat completed tool calls.');
     if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
+    const responseOnlyRepair = !!result.nativeValidationError && checked.issues.every(issue =>
+      issue.startsWith('Final report is missing the required explicit status.') ||
+      issue.startsWith('Final response validation failed:')
+    );
+    // AI SDK structured output is a separate generation step after tool use.
+    // Some OpenAI-compatible providers return an empty stop response when that
+    // step is still sent with tool definitions. Once all native contracts are
+    // satisfied, retry only the schema-bound final response without tools.
+    // The complete native receipts remain in `messages`; no judgment or source
+    // content is replaced, and any unresolved tool contract keeps tools enabled.
+    if(responseOnlyRepair) finalizeWithoutTools = true;
     const originalMessages = JSON.parse(JSON.stringify(result.response?.messages?.length ? result.response.messages : nativeResponseMessages(roundSteps.length?roundSteps:observedSteps,result.text)));
     const cursorMessages=[];
     // Once the native agent explicitly opens an exact case, advancing its
@@ -427,6 +438,10 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       checked=inspectContinuation(steps,result.text,policy);
       if(result.finishReason === 'length') checked.issues.push('The previous response reached the fixed output-token limit and is incomplete. Return one concise valid final response matching the original schema; retain the existing native reads and do not repeat completed tool calls.');
       if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
+      if(checked.issues.some(issue =>
+        !issue.startsWith('Final report is missing the required explicit status.') &&
+        !issue.startsWith('Final response validation failed:')
+      )) finalizeWithoutTools = false;
       checked.issues.push('Exact READ_CASE cursor transport completed after the prior model output. Re-evaluate the same task now using every persisted source page before returning the final judgment or public content.');
       stalledRounds=0;
     }

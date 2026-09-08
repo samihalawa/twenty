@@ -455,6 +455,37 @@ test('validated AI SDK structured output is canonical when provider text is empt
  assert.equal(result.text,JSON.stringify(exact));
 });
 
+test('empty structured stop after completed native reads retries final schema response without tools',async()=>{
+ const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
+ const exact={status:'PREPARED',content:'Verified public content'};
+ let rounds=0;
+ const result=await generateWithContinuation(async options=>{
+  rounds++;
+  if(rounds===1){
+   assert.equal(Object.keys(options.tools).length,1);
+   return {text:'',steps:[],finishReason:'stop',usage:{},nativeValidationError:'The provider returned no final JSON text.'};
+  }
+  assert.equal(Object.keys(options.tools).length,0);
+  return {text:'',output:exact,steps:[],finishReason:'stop',usage:{}};
+ },{messages:[{role:'user',content:'prepare exact case'}],tools:{execute_tool:{}}},{enabled:true,responseSchema:schema,requireOperatorStatus:true,maxRepairs:2});
+ assert.equal(rounds,2);
+ assert.equal(result.text,JSON.stringify(exact));
+});
+
+test('empty structured stop keeps tools when a native contract is unresolved',async()=>{
+ const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
+ const exact={status:'PREPARED',content:'Verified after the successful retry'};
+ let rounds=0;
+ const result=await generateWithContinuation(async options=>{
+  rounds++;
+  assert.equal(Object.keys(options.tools).length,1);
+  if(rounds===1)return {text:'',steps:[step('find_one_document',{id:'doc'},{error:'temporary read failure'},false)],finishReason:'stop',usage:{},nativeValidationError:'The provider returned no final JSON text.'};
+  return {text:JSON.stringify(exact),steps:[step('find_one_document',{id:'doc'},{id:'doc'})],finishReason:'stop',usage:{}};
+ },{messages:[{role:'user',content:'prepare exact case'}],tools:{execute_tool:{}}},{enabled:true,responseSchema:schema,requireOperatorStatus:true,maxRepairs:2});
+ assert.equal(rounds,2);
+ assert.equal(result.text,JSON.stringify(exact));
+});
+
 test('schema-valid GPT-OSS reasoning payload is canonical when final text is empty',async()=>{
  const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
  const exact={status:'PREPARED',content:'Verified public content'};
