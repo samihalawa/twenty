@@ -159,6 +159,12 @@ function normalizeReadOnlyFindArguments(toolName,args) {
   });
   return changed?normalized:args;
 }
+function repairLearnToolsJson(value) {
+  if(typeof value!=='string'||value.length>8192)return null;
+  const repaired=value.replace(/([{,]\s*"aspects"\s*:\s*\[)\s*\{\s*"(schema|description)"\s*\}\s*(\])/,'$1"$2"$3');
+  if(repaired===value)return null;
+  try{const parsed=JSON.parse(repaired);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:null;}catch{return null;}
+}
 async function generateWithContinuation(generateText, options, policy = {}) {
   if (!policy.enabled) return generateText(options);
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
@@ -180,6 +186,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       if(normalizedArgs.expectedUpdatedAt===undefined && typeof normalizedArgs.updatedAt==='string') { normalizedArgs.expectedUpdatedAt=normalizedArgs.updatedAt; delete normalizedArgs.updatedAt; }
       if(normalizedArgs.stateEvidence && typeof normalizedArgs.stateEvidence==='object' && typeof normalizedArgs.stateEvidence.markdown!=='string') { normalizedArgs.evidenceJSON={...normalizedArgs.stateEvidence,...(normalizedArgs.evidenceJSON??{})}; delete normalizedArgs.stateEvidence; }
       if(Array.isArray(normalizedArgs.candidateDecisions) && !Array.isArray(normalizedArgs.evidenceJSON?.candidateDecisions)) { normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),candidateDecisions:normalizedArgs.candidateDecisions}; delete normalizedArgs.candidateDecisions; }
+      for(const key of ['sourceCoverage','nextAction','lastReconciledAt']) if(normalizedArgs[key]!==undefined && normalizedArgs.evidenceJSON?.[key]===undefined) { normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),[key]:normalizedArgs[key]}; delete normalizedArgs[key]; }
       actualArgs=normalizedArgs;
       if(name==='execute_tool') input.arguments=actualArgs;
     }
@@ -238,6 +245,10 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       experimental_repairToolCall:async repairInput=>{
         if(repairInput.toolCall?.toolName==='execute_tool'){
           const repairedInput=closeTruncatedJson(repairInput.toolCall.input);
+          if(repairedInput)return {...repairInput.toolCall,input:repairedInput};
+        }
+        if(repairInput.toolCall?.toolName==='learn_tools'){
+          const repairedInput=repairLearnToolsJson(repairInput.toolCall.input);
           if(repairedInput)return {...repairInput.toolCall,input:repairedInput};
         }
         const match=repairInput.toolCall?.toolName?.match(/^(.+)<\|channel\|>(?:analysis|commentary|json)$/);
@@ -317,4 +328,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson,normalizeReadOnlyFindArguments};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson,normalizeReadOnlyFindArguments,repairLearnToolsJson};

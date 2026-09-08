@@ -155,6 +155,21 @@ test('structured parse recovery keeps real step messages inside the continuation
  },{tools:{},messages:[{role:'user',content:'case'}]},{enabled:true,recoverError:(error,steps)=>{assert.equal(error,originalError);return receipt(steps,'{"status":"TOOLING_BLOCKED"}');}});
  assert.equal(rounds,2);assert.equal(result.steps.length,2);
 });
+test('observed top-level opportunity evidence fields are normalized into the structured delta',async()=>{
+ let normalized;
+ await generateWithContinuation(async opts=>{
+  const execute=opts.tools.execute_tool.execute;
+  await execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:0}});
+  const evidence=freshEvidence();
+  await execute({toolName:'update_one_opportunity',arguments:{id:'case',sourceCoverage:evidence.sourceCoverage,nextAction:evidence.nextAction,lastReconciledAt:evidence.lastReconciledAt}});
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{execute_tool:{execute:async input=>{
+  if(input.toolName==='update_one_opportunity'){normalized=input.arguments;return {success:true,result:{id:'case'}};}
+  return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor:0,nextCursor:null,hasNextPage:false,totalSections:0,fingerprint:'hash',sections:[]}};
+ }}}},{enabled:true});
+ assert.deepEqual(normalized.evidenceJSON,{...freshEvidence(),sourceCoverage:{...freshEvidence().sourceCoverage,fingerprint:'hash'}});
+ assert.equal(normalized.sourceCoverage,undefined);assert.equal(normalized.nextAction,undefined);assert.equal(normalized.lastReconciledAt,undefined);
+});
 test('only exact registered tool with known malformed channel suffix is repaired',async()=>{
  const input='{ "id": "exact" }';
  await generateWithContinuation(async options=>{
@@ -174,16 +189,19 @@ test('a directly emitted exact learned lazy tool is repaired through execute_too
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{learn_tools:{execute:async()=>({tools:[{name:'find_many_messages'}]})},execute_tool:{execute:async()=>({})}}},{enabled:true});
 });
-test('a structurally complete execute wrapper repairs only missing trailing brackets',async()=>{
- const {closeTruncatedJson,normalizeReadOnlyFindArguments}=require('./workflow-continuation.cjs');
+test('a structurally complete execute wrapper repairs only bounded observed syntax defects',async()=>{
+ const {closeTruncatedJson,normalizeReadOnlyFindArguments,repairLearnToolsJson}=require('./workflow-continuation.cjs');
   assert.deepEqual(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"case","evidenceJSON":{"candidateDecisions":[]}}'),{toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:{candidateDecisions:[]}}});
  assert.deepEqual(closeTruncatedJson('{"toolName":"find_many_calendar_event_participants","arguments":{"calendarEventId":{"eq":"00000000-0000-4000-8000-000000000000"}","select":["id"]}}'),{toolName:'find_many_calendar_event_participants',arguments:{calendarEventId:{eq:'00000000-0000-4000-8000-000000000000'},select:['id']}});
   assert.equal(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"unfinished'),null);
  assert.deepEqual(normalizeReadOnlyFindArguments('find_many_call_recordings',{and:[{startedAt:{gte:'a'}},'{"startedAt":{"lt":"b"}}'],select:['id']}),{and:[{startedAt:{gte:'a'}},{startedAt:{lt:'b'}}],select:['id']});
  assert.deepEqual(normalizeReadOnlyFindArguments('update_one_call_recording',{and:['{"id":{"eq":"x"}}']}),{and:['{"id":{"eq":"x"}}']});
+ assert.deepEqual(repairLearnToolsJson('{"toolNames":["app_crm_case_context"],"aspects":[{"schema"}]}'),{toolNames:['app_crm_case_context'],aspects:['schema']});
  await generateWithContinuation(async options=>{
   const repaired=await options.experimental_repairToolCall({toolCall:{toolName:'execute_tool',input:'{"toolName":"find_one_message","arguments":{"id":"exact","select":["id","text"]}'}});
   assert.deepEqual(repaired.input,{toolName:'find_one_message',arguments:{id:'exact',select:['id','text']}});
+  const learned=await options.experimental_repairToolCall({toolCall:{toolName:'learn_tools',input:'{"toolNames":["app_crm_case_context"],"aspects":[{"schema"}]}'}});
+  assert.deepEqual(learned.input,{toolNames:['app_crm_case_context'],aspects:['schema']});
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{execute_tool:{execute:async()=>({})}}},{enabled:true});
 });
