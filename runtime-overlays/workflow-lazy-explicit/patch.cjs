@@ -261,6 +261,10 @@ const specs = [
 // Additional repairs for explicit native workflow tools; ordinary lazy callers stay unchanged.
 specs[1].changes.push(...[
   [
+    "const toolContext = {\n            workspaceId: agent.workspaceId,",
+    "const toolContext = {\n            workspaceId: agent.workspaceId,\n            nativeCaseContext: require('/opt/workflow-lazy-tools/case-context-guard.cjs').createGuard(),"
+  ],
+  [
     "const catalog = fullCatalog.filter((entry)=>allowedCategories.has(entry.category) && !excludedToolNames.has(entry.name));",
     "const configuredReadTools = new Set(Array.isArray(agent.modelConfiguration?.workflowReadOnlyToolNames) ? agent.modelConfiguration.workflowReadOnlyToolNames : []);\n        const safeReadTools = new Set(['app_linkedin_conversations', 'app_crm_runtime_clock', 'app_crm_case_context']);\n        const catalog = fullCatalog.filter((entry)=>(allowedCategories.has(entry.category) || (requireExplicitObjectGrants && configuredReadTools.has(entry.name) && safeReadTools.has(entry.name))) && !excludedToolNames.has(entry.name));"
   ],
@@ -275,6 +279,18 @@ specs[1].changes.push(...[
   [
     "        return {\n            tools,\n            catalogSection:",
     "        // Workflow agents cannot navigate stored output blobs. Give an explicit,\n        // bounded failure instead of an incomplete preview that looks like evidence.\n        if (requireExplicitObjectGrants) {\n            for (const [name, tool] of Object.entries(tools)) {\n                const execute = tool.execute;\n                tool.execute = async (...args) => {\n                    const output = await execute(...args);\n                    const serialized = JSON.stringify(output);\n                    if (serialized !== undefined && Buffer.byteLength(serialized, 'utf8') > 49152) {\n                        return {\n                            success: false,\n                            errorCode: 'WORKFLOW_TOOL_OUTPUT_TOO_LARGE',\n                            operationMayHaveApplied: name === _tools.EXECUTE_TOOL_TOOL_NAME,\n                            error: 'The tool completed but its full output exceeds 49152 bytes. This is not an empty result and no partial evidence is supplied. For reads, select fewer fields and paginate with a smaller limit; read an exact record separately. For learn_tools, request one tool and one aspect at a time. A mutation may already have applied: independently read back the exact record before considering any retry.'\n                        };\n                    }\n                    return output;\n                };\n            }\n        }\n        return {\n            tools,\n            catalogSection:"
+  ]
+]);
+
+// Carry one execution-scoped case snapshot through the lazy meta-tool boundary.
+specs[2].changes.push(...[
+  [
+    "            onCodeExecutionUpdate: context.onCodeExecutionUpdate\n        };",
+    "            onCodeExecutionUpdate: context.onCodeExecutionUpdate,\n            nativeCaseContext: context.nativeCaseContext\n        };"
+  ],
+  [
+    "            const result = await this.toolExecutorService.dispatch(\n                entry,\n                args,\n                fullContext\n            );",
+    "            if (fullContext.requireExplicitObjectGrants && toolName === 'update_one_opportunity') require('/opt/workflow-lazy-tools/case-context-guard.cjs').assertOpportunityWrite(fullContext.nativeCaseContext, args);\n            const result = await this.toolExecutorService.dispatch(\n                entry,\n                args,\n                fullContext\n            );\n            if (fullContext.requireExplicitObjectGrants) require('/opt/workflow-lazy-tools/case-context-guard.cjs').observe(fullContext.nativeCaseContext, toolName, result);"
   ]
 ]);
 

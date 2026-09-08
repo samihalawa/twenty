@@ -20,6 +20,22 @@ function nativeOutput(output) {
   }
   return {value,error,ok};
 }
+function recordCasePages(step, casePages) {
+  let foundIncomplete = false;
+  const events=nativeToolEvents(step);
+  for(const call of events.calls) {
+    const receipt=events.results.get(call.toolCallId),raw=call.input??call.args;
+    const name=call.toolName==='execute_tool'?raw?.toolName:call.toolName;
+    const output=nativeOutput(receipt?.output??receipt?.result);
+    if(name==='app_crm_case_context' && receipt?.type!=='tool-error' && output.ok && output.value?.mode==='READ_CASE') {
+      const page=output.value;
+      const coverage=trackCoverage(casePages.get(page.opportunityId),page);
+      casePages.set(page.opportunityId,coverage);
+      if(!coverage.complete) foundIncomplete = true;
+    }
+  }
+  return foundIncomplete;
+}
 // Mechanical tool-result contracts only. The same native model retains all judgment.
 function inspectContinuation(steps, text) {
   const calls = [];
@@ -167,7 +183,15 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
     const observedSteps=[], callsBeforeRound=used;
     let result = await generateText({...options, tools, messages,
-      onStepFinish:async step=>{observedSteps.push(step);await options.onStepFinish?.(step);},
+      onStepFinish:async step=>{
+        observedSteps.push(step);
+        await options.onStepFinish?.(step);
+        if(recordCasePages(step,casePages)) {
+          const error=new Error('INCOMPLETE_CASE_SNAPSHOT: deterministic cursor transport must finish before another model step');
+          error.code='INCOMPLETE_CASE_SNAPSHOT';
+          throw error;
+        }
+      },
       experimental_repairToolCall:async repairInput=>{
         const match=repairInput.toolCall?.toolName?.match(/^(.+)<\|channel\|>(?:analysis|commentary|json)$/);
         if(match && Object.hasOwn(tools,match[1])) return {...repairInput.toolCall,toolName:match[1]};
@@ -175,6 +199,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       },
       stopWhen: async state => used >= maxCalls || (await Promise.all(stopConditions.map(stop=>stop(state)))).some(Boolean)
     }).catch(error=>{
+      if(error?.code==='INCOMPLETE_CASE_SNAPSHOT') return {steps:observedSteps,text:'STATUS: ATTEMPTED_UNVERIFIED\nNATIVE_CONTINUATION_REQUIRED: complete the bound READ_CASE cursor before judgment or mutation.',finishReason:'stop',usage:observedSteps.reduce((sum,step)=>addUsage(sum,step.usage),{}),response:observedSteps.at(-1)?.response};
       if(!policy.recoverError)throw error;
       const recovered=policy.recoverError(error,observedSteps);
       return {...recovered,response:observedSteps.at(-1)?.response};
@@ -185,19 +210,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     // returned step receipt. Reconstruct the same mechanical READ_CASE state
     // from that authoritative receipt so cursor draining never depends on the
     // provider having invoked our execute proxy in a particular shape.
-    for(const step of (roundSteps.length ? roundSteps : observedSteps)) {
-      const events=nativeToolEvents(step);
-      for(const call of events.calls) {
-        const receipt=events.results.get(call.toolCallId),raw=call.input??call.args;
-        const name=call.toolName==='execute_tool'?raw?.toolName:call.toolName;
-        const output=nativeOutput(receipt?.output??receipt?.result);
-        if(name==='app_crm_case_context' && receipt?.type!=='tool-error' && output.ok && output.value?.mode==='READ_CASE') {
-          const page=output.value;
-          const coverage=trackCoverage(casePages.get(page.opportunityId),page);
-          casePages.set(page.opportunityId,coverage);
-        }
-      }
-    }
+    for(const step of (roundSteps.length ? roundSteps : observedSteps)) recordCasePages(step,casePages);
     const completeCases=[...casePages.values()].filter(c=>c.complete);
     if(completeCases.length===1 && typeof result.text==='string')try{const value=JSON.parse(result.text);if(value && typeof value==='object' && Object.hasOwn(value,'sourceFingerprint')){value.sourceFingerprint=completeCases[0].fingerprint;result={...result,text:JSON.stringify(value)};}}catch{}
     usage = addUsage(usage,result.totalUsage ?? result.usage);
@@ -252,4 +265,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages};

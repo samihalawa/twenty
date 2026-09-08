@@ -88,6 +88,24 @@ test('returned SDK receipt also initializes deterministic cursor drain',async()=
  }}}},{enabled:true,maxToolCalls:40});
  assert.equal(rounds,2);assert.equal(executions,1);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
 });
+test('incomplete callback receipt interrupts the model before its next step and drains the exact cursor',async()=>{
+ let rounds=0,drained=0,reachedAfterIncomplete=false;
+ const result=await generateWithContinuation(async options=>{
+  rounds++;
+  if(rounds===1){
+   await options.onStepFinish(page(0,2));
+   reachedAfterIncomplete=true;
+   return receipt([],'STATUS: COMPLETED');
+  }
+  assert.equal(reachedAfterIncomplete,false);
+  assert.match(options.messages.at(-1).content,/cursor transport completed/);
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{messages:[{role:'user',content:'xoople exact case'}],tools:{execute_tool:{execute:async input=>{
+  drained++;assert.equal(input.arguments.cursor,2);
+  return {success:true,result:{mode:'READ_CASE',opportunityId:'case',fingerprint:'hash',cursor:2,nextCursor:null,hasNextPage:false,totalSections:4,providerPaginationComplete:true,sections:[{sourceId:'message-2'},{sourceId:'message-3'}]}};
+ }}}},{enabled:true,maxToolCalls:40});
+ assert.equal(rounds,2);assert.equal(drained,1);assert.equal(reachedAfterIncomplete,false);assert.equal(result.text,'STATUS: NEEDS_EVIDENCE');
+});
 test('same run tool budget prevents another actual tool execution',async()=>{
  let executions=0,rounds=0;
  const result=await generateWithContinuation(async opts=>{rounds++;await opts.tools.execute_tool.execute({});return receipt([page(0,2)]);},{tools:{execute_tool:{execute:async()=>{executions++;}}}},{enabled:true,maxToolCalls:1});

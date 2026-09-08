@@ -31,6 +31,7 @@ const mockAi={
 const overrides={
 '/opt/workflow-lazy-tools/schema-validation.cjs':require('./schema-validation.cjs'),
 '/opt/workflow-lazy-tools/workflow-continuation.cjs':require('./workflow-continuation.cjs'),
+'/opt/workflow-lazy-tools/case-context-guard.cjs':require('./case-context-guard.cjs'),
 'ai':mockAi,
 'twenty-shared/constants':{AUTO_SELECT_SMART_MODEL_ID:'auto'},
 'twenty-shared/utils':{isDefined:x=>x!=null,isNonEmptyArray:x=>Array.isArray(x)&&x.length>0,tipTapDocumentToMarkdown:()=>''},
@@ -119,6 +120,31 @@ await test('case context runtime rejects legacy write modes and unexpected argum
  const oldCatalog=registry.getCatalog;registry.getCatalog=async()=>[{name:'app_crm_case_context',category:'logic_function'}];
  try {const out=await registry.resolveAndExecute('app_crm_case_context',{mode:'READ_CASE',opportunityId:'op',cursor:'cursor',fingerprint:'fingerprint'},base);assert.equal(out.success,true);assert.equal(dispatches.length,before+1);}
  finally {registry.getCatalog=oldCatalog;}
+});
+await test('same-step incomplete case read cannot race an opportunity write',async()=>{
+ const previousCatalog=registry.getCatalog, previousDispatch=registry.toolExecutorService.dispatch;
+ let writes=0;
+ registry.getCatalog=async()=>[
+  {name:'app_crm_case_context',category:'logic_function'},
+  {name:'update_one_opportunity',category:'record'}
+ ];
+ registry.toolExecutorService.dispatch=async(entry,args)=>{
+  if(entry.name==='update_one_opportunity'){writes++;return {success:true,result:{id:args.id}};}
+  const cursor=Number(args.cursor??0);
+  return {success:true,result:{mode:'READ_CASE',opportunityId:args.opportunityId,cursor,nextCursor:cursor===0?11:null,hasNextPage:cursor===0,totalSections:41,sections:Array.from({length:cursor===0?11:30},(_,i)=>({sourceId:'source-'+(cursor+i)})),fingerprint:'xoople-41'}};
+ };
+ const guarded={...base,requireExplicitObjectGrants:true,nativeCaseContext:require('./case-context-guard.cjs').createGuard()};
+ try {
+  const [first,blocked]=await Promise.all([
+   registry.resolveAndExecute('app_crm_case_context',{mode:'READ_CASE',opportunityId:'xoople',cursor:0},guarded),
+   registry.resolveAndExecute('update_one_opportunity',{id:'xoople'},guarded)
+  ]);
+  assert.equal(first.success,true);assert.equal(blocked.success,false);assert.match(blocked.error,/CASE_CONTEXT_INCOMPLETE/);assert.equal(writes,0);
+  const terminal=await registry.resolveAndExecute('app_crm_case_context',{mode:'READ_CASE',opportunityId:'xoople',cursor:11},guarded);
+  assert.equal(terminal.success,true);
+  const changed=await registry.resolveAndExecute('update_one_opportunity',{id:'xoople'},guarded);
+  assert.equal(changed.success,true);assert.equal(writes,1);
+ } finally {registry.getCatalog=previousCatalog;registry.toolExecutorService.dispatch=previousDispatch;}
 });
 await test('workflow oversized output is an explicit bounded failure with mutation ambiguity preserved',async()=>{
  const prior=registry.resolveAndExecute;
