@@ -203,6 +203,7 @@ test('duplicate top-level evidence controls are always removed after structured 
   return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor:0,nextCursor:null,hasNextPage:false,totalSections:0,fingerprint:'hash',sections:[]}};
  }}}},{enabled:true});
  assert.equal(normalized.sourceCoverage,undefined);assert.equal(normalized.nextAction,undefined);
+ assert.equal(normalized.lastReconciledAt,'2026-09-08T03:50:43.454Z');
  assert.equal(normalized.evidenceJSON.sourceCoverage.fingerprint,'hash');assert.ok(Number.isFinite(Date.parse(normalized.evidenceJSON.sourceCoverage.checkedAt)));
 });
 test('only exact registered tool with known malformed channel suffix is repaired',async()=>{

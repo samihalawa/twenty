@@ -191,6 +191,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       if(Array.isArray(normalizedArgs.candidateDecisions) && !Array.isArray(normalizedArgs.evidenceJSON?.candidateDecisions)) { normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),candidateDecisions:normalizedArgs.candidateDecisions}; delete normalizedArgs.candidateDecisions; }
       for(const key of ['sourceCoverage','nextAction']) if(normalizedArgs[key]!==undefined) { if(normalizedArgs.evidenceJSON?.[key]===undefined) normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),[key]:normalizedArgs[key]}; delete normalizedArgs[key]; }
       if(normalizedArgs.lastReconciledAt!==undefined && normalizedArgs.evidenceJSON?.lastReconciledAt===undefined) normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),lastReconciledAt:normalizedArgs.lastReconciledAt};
+      if(normalizedArgs.lastReconciledAt===undefined && typeof normalizedArgs.evidenceJSON?.lastReconciledAt==='string') normalizedArgs.lastReconciledAt=normalizedArgs.evidenceJSON.lastReconciledAt;
       const exactReadRevision=opportunityReadRevisions.get(normalizedArgs.id);
       if(typeof exactReadRevision==='string') normalizedArgs.expectedUpdatedAt=exactReadRevision;
       actualArgs=normalizedArgs;
