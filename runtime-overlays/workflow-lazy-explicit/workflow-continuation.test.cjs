@@ -401,3 +401,12 @@ test('nested error payload is never successful source coverage',()=>{
  const bad=step('app_crm_case_context',{opportunityId:'case'},{data:{error:'Native provider unavailable',mode:'READ_CASE',opportunityId:'case',cursor:0,hasNextPage:false}});
  assert.ok(inspectContinuation([bad],'STATUS: NO_WORK').issues.some(x=>x.includes('Native provider unavailable')));
 });
+
+test('validated AI SDK structured output is canonical when provider text is empty',async()=>{
+ const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
+ const exact={status:'PREPARED',content:'Verified public content'};
+ let rounds=0;
+ const result=await generateWithContinuation(async()=>{rounds++;return {text:'',output:exact,steps:[],finishReason:'stop',usage:{}};},{}, {enabled:true,responseSchema:schema,requireOperatorStatus:true});
+ assert.equal(rounds,1);
+ assert.equal(result.text,JSON.stringify(exact));
+});

@@ -170,6 +170,9 @@ function repairLearnToolsJson(value) {
 async function generateWithContinuation(generateText, options, policy = {}) {
   if (!policy.enabled) return generateText(options);
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
+  const validateStructured = policy.responseSchema
+    ? require('./schema-validation.cjs').compileResponseSchema(policy.responseSchema)
+    : null;
   let used = 0, stalledRounds = 0, usage = {}, messages = [...(options.messages ?? [])];
   const steps = [];
   const casePages = new Map();
@@ -272,6 +275,15 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       const recovered=policy.recoverError(error,observedSteps);
       return {...recovered,response:observedSteps.at(-1)?.response};
     });
+    // AI SDK v6 exposes schema-validated results on `output`. Compatible
+    // providers can leave `text` empty or non-canonical even when that value is
+    // complete. Canonicalize only an independently schema-valid SDK output.
+    if (validateStructured) {
+      try {
+        const checked = result.output === undefined ? null : validateStructured(result.output);
+        if (checked?.success) result = {...result, text: JSON.stringify(checked.value), nativeValidationError: undefined};
+      } catch {}
+    }
     const roundSteps = result.steps ?? [];
     steps.push(...roundSteps);
     // Some AI SDK/provider paths surface an executed lazy tool only in the
