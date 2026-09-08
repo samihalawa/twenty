@@ -195,6 +195,7 @@ test('a structurally complete execute wrapper repairs only bounded observed synt
  assert.deepEqual(closeTruncatedJson('{"toolName":"find_many_calendar_event_participants","arguments":{"calendarEventId":{"eq":"00000000-0000-4000-8000-000000000000"}","select":["id"]}}'),{toolName:'find_many_calendar_event_participants',arguments:{calendarEventId:{eq:'00000000-0000-4000-8000-000000000000'},select:['id']}});
   assert.equal(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"unfinished'),null);
  assert.deepEqual(normalizeReadOnlyFindArguments('find_many_call_recordings',{and:[{startedAt:{gte:'a'}},'{"startedAt":{"lt":"b"}}'],select:['id']}),{and:[{startedAt:{gte:'a'}},{startedAt:{lt:'b'}}],select:['id']});
+ assert.deepEqual(normalizeReadOnlyFindArguments('find_many_calendar_event_participants',{calendarEventId:'00000000-0000-4000-8000-000000000000',select:['id']}),{calendarEventId:{eq:'00000000-0000-4000-8000-000000000000'},select:['id']});
  assert.deepEqual(normalizeReadOnlyFindArguments('update_one_call_recording',{and:['{"id":{"eq":"x"}}']}),{and:['{"id":{"eq":"x"}}']});
  assert.deepEqual(repairLearnToolsJson('{"toolNames":["app_crm_case_context"],"aspects":[{"schema"}]}'),{toolNames:['app_crm_case_context'],aspects:['schema']});
  await generateWithContinuation(async options=>{
@@ -204,6 +205,15 @@ test('a structurally complete execute wrapper repairs only bounded observed synt
   assert.deepEqual(learned.input,{toolNames:['app_crm_case_context'],aspects:['schema']});
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{execute_tool:{execute:async()=>({})}}},{enabled:true});
+});
+test('operator continuation rejects a provisional sentence without an explicit status',async()=>{
+ let rounds=0;
+ const result=await generateWithContinuation(async options=>{
+  if(++rounds===1)return receipt([page(0,null)],'Now fetch recordings.');
+  assert.match(options.messages.at(-1).content,/missing the required explicit status/);
+  return receipt([],'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: recording API unavailable');
+ },{tools:{}},{enabled:true,requireOperatorStatus:true});
+ assert.equal(rounds,2);assert.match(result.text,/NEEDS_EVIDENCE/);
 });
 test('invalid final structured output receives bounded same-model repair with real steps',async()=>{
  let rounds=0;const first=page(0,null);first.response={messages:[{role:'assistant',content:'actual case read'},{role:'tool',content:'all native pages'}]};

@@ -37,7 +37,7 @@ function recordCasePages(step, casePages) {
   return foundIncomplete;
 }
 // Mechanical tool-result contracts only. The same native model retains all judgment.
-function inspectContinuation(steps, text) {
+function inspectContinuation(steps, text, requirements={}) {
   const calls = [];
   for (const step of steps) {
     const events=nativeToolEvents(step);
@@ -49,11 +49,12 @@ function inspectContinuation(steps, text) {
     }
   }
   const issues = [], pages = new Map();
+  let finalObject;try{finalObject=JSON.parse(text);}catch{}
+  if(requirements.requireOperatorStatus && !/STATUS\s*[:*\s]+[A-Z_]+\b/.test(String(text).replace(/\*\*/g,'')) && typeof finalObject?.status!=='string') issues.push('Final report is missing the required explicit status. Continue the same task and return a complete status-bound result after the pending native operations.');
   const lastFailed=calls.findLast(c=>!c.ok);
   if(lastFailed && !calls.slice(calls.indexOf(lastFailed)+1).some(c=>c.ok && c.name===lastFailed.name) && !/STATUS\s*:\s*(?:TOOLING_BLOCKED|NEEDS_EVIDENCE)/.test(String(text))) issues.push('A native tool call failed or its arguments could not be parsed: '+String(lastFailed.name??lastFailed.nativeName)+'. Exact error: '+String(lastFailed.error??'missing successful tool result').slice(0,1600)+'. Use the learned schema, retry only an operation proven not executed, or report the exact tooling/evidence block.');
   for (const call of calls) if(call.ok && call.name==='app_crm_case_context' && call.output?.mode==='READ_CASE')pages.set(call.output.opportunityId,trackCoverage(pages.get(call.output.opportunityId),call.output));
   for(const [id,state] of pages)if(!state.complete)issues.push('Unread source pages for '+id+'. Continue exact native cursor without copying the machine fingerprint: '+JSON.stringify({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:id,cursor:state.next}}));
-  let finalObject;try{finalObject=JSON.parse(text);}catch{}
   if(finalObject&&Object.hasOwn(finalObject,'sourceFingerprint'))for(const state of pages.values())if(state.complete)try{verifySelectedCandidateReads([...state.sections.values()],calls.map(c=>({...c,output:{result:c.output}})),finalObject.candidateDecisions);}catch(error){issues.push(error.message+': choose relevance for every indexed candidate and read every full selected thread before completing the structured response.');}
   const writes = calls.map((c, index) => ({...c,index})).filter(c => /^(update|create|upsert)_one_/.test(c.name));
   for (const write of writes.filter(c=>c.ok)) {
@@ -157,6 +158,7 @@ function normalizeReadOnlyFindArguments(toolName,args) {
     try{const parsed=JSON.parse(value);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){changed=true;return parsed;}}catch{}
     return value;
   });
+  for(const [key,value] of Object.entries(args))if(key.endsWith('Id')&&typeof value==='string'){normalized[key]={eq:value};changed=true;}
   return changed?normalized:args;
 }
 function repairLearnToolsJson(value) {
@@ -275,10 +277,10 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     const completeCases=[...casePages.values()].filter(c=>c.complete);
     if(completeCases.length===1 && typeof result.text==='string')try{const value=JSON.parse(result.text);if(value && typeof value==='object' && Object.hasOwn(value,'sourceFingerprint')){value.sourceFingerprint=completeCases[0].fingerprint;result={...result,text:JSON.stringify(value)};}}catch{}
     usage = addUsage(usage,result.totalUsage ?? result.usage);
-    let checked = inspectContinuation(steps,result.text);
+    let checked = inspectContinuation(steps,result.text,policy);
     if(result.finishReason!=='length' && !result.nativeValidationError){
       const downgraded=downgradeIncompleteNoWork(result.text,checked);
-      if(downgraded!==null){result={...result,text:downgraded};checked=inspectContinuation(steps,result.text);}
+      if(downgraded!==null){result={...result,text:downgraded};checked=inspectContinuation(steps,result.text,policy);}
     }
     stalledRounds = used > callsBeforeRound ? 0 : stalledRounds + 1;
     if(result.finishReason === 'length') checked.issues.push('The previous response reached the fixed output-token limit and is incomplete. Return one concise valid final response matching the original schema; retain the existing native reads and do not repeat completed tool calls.');
@@ -309,7 +311,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       if(synthetic.toolResults[0].type==='tool-error')break;
     }
     if(cursorMessages.length){
-      checked=inspectContinuation(steps,result.text);
+      checked=inspectContinuation(steps,result.text,policy);
       if(result.finishReason === 'length') checked.issues.push('The previous response reached the fixed output-token limit and is incomplete. Return one concise valid final response matching the original schema; retain the existing native reads and do not repeat completed tool calls.');
       if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
       checked.issues.push('Exact READ_CASE cursor transport completed after the prior model output. Re-evaluate the same task now using every persisted source page before returning the final judgment or public content.');
