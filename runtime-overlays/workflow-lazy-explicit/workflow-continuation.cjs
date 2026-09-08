@@ -355,7 +355,11 @@ async function generateWithContinuation(generateText, options, policy = {}) {
         if(learnedToolNames.has(directName) && Object.hasOwn(tools,'execute_tool') && directInput && typeof directInput==='object' && !Array.isArray(directInput)) return {...repairInput.toolCall,toolName:'execute_tool',input:{toolName:directName,arguments:directInput}};
         return options.experimental_repairToolCall?.(repairInput)??null;
       },
-      stopWhen: async state => used >= maxCalls || (await Promise.all(stopConditions.map(stop=>stop(state)))).some(Boolean)
+      // The tool-phase stop predicate is stateful and AI SDK structured output
+      // may need its own terminal generation step. Once tools are closed, use
+      // the SDK's default single-result completion contract instead of carrying
+      // the tool-oriented predicate into the schema-only request.
+      stopWhen: finalizeWithoutTools ? undefined : async state => used >= maxCalls || (await Promise.all(stopConditions.map(stop=>stop(state)))).some(Boolean)
     }).catch(error=>{
       if(error?.code==='INCOMPLETE_CASE_SNAPSHOT') return {steps:observedSteps,text:'STATUS: ATTEMPTED_UNVERIFIED\nNATIVE_CONTINUATION_REQUIRED: complete the bound READ_CASE cursor before judgment or mutation.',finishReason:'stop',usage:observedSteps.reduce((sum,step)=>addUsage(sum,step.usage),{}),response:observedSteps.at(-1)?.response};
       if(!policy.recoverError)throw error;
@@ -453,7 +457,8 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     // is actually exhausted.
     const stopReason=policy.shouldContinue?.()===false?'CREDITS_UNAVAILABLE':used>=maxCalls||checked.calls>=maxCalls?'TOOL_BUDGET_EXHAUSTED':stalledRounds>maxRepairs?'NO_PROGRESS_REPAIR_LIMIT_REACHED':null;
     if (stopReason) {
-      return {...result,nativeExecutionError:stopReason+': '+checked.issues.join('; '),text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
+      const finalizationShape=finalizeWithoutTools?' [finalization=no-tools-default-stop; observedSteps='+(roundSteps.length||observedSteps.length)+'; finish='+String(result.finishReason??'unknown')+']':'';
+      return {...result,nativeExecutionError:stopReason+finalizationShape+': '+checked.issues.join('; '),text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+finalizationShape+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
     }
     const skeleton=policy.responseSchema ? JSON.stringify(schemaSkeleton(policy.responseSchema)) : '';
     messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
