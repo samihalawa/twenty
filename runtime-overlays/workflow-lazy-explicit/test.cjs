@@ -12,7 +12,8 @@ function moduleClass(source,name,overrides={}){
 }
 const Registry=moduleClass(PATCHES[2].patched,'ToolRegistryService',{
 'ai':{jsonSchema:x=>x},
-'../output-transforms/compact-tool-output.util':{compactToolOutput:x=>x}
+'../output-transforms/compact-tool-output.util':{compactToolOutput:x=>x},
+'/opt/workflow-lazy-tools/case-context-guard.cjs':require('./case-context-guard.cjs')
 });
 const contextSeen=[];
 const provider={category:'record',isAvailable:async c=>true,generateDescriptors:async(c,o)=>{
@@ -139,7 +140,9 @@ await test('same-step incomplete case read cannot race an opportunity write',asy
    registry.resolveAndExecute('app_crm_case_context',{mode:'READ_CASE',opportunityId:'xoople',cursor:0},guarded),
    registry.resolveAndExecute('update_one_opportunity',{id:'xoople'},guarded)
   ]);
-  assert.equal(first.success,true);assert.equal(blocked.success,false);assert.match(blocked.error,/CASE_CONTEXT_INCOMPLETE/);assert.equal(writes,0);
+  assert.equal(first.success,true,JSON.stringify(first));
+  assert.equal(blocked.success,false,JSON.stringify(blocked));
+  assert.match(blocked.error,/CASE_CONTEXT_INCOMPLETE/);assert.equal(writes,0);
   const terminal=await registry.resolveAndExecute('app_crm_case_context',{mode:'READ_CASE',opportunityId:'xoople',cursor:11},guarded);
   assert.equal(terminal.success,true);
   const changed=await registry.resolveAndExecute('update_one_opportunity',{id:'xoople'},guarded);
