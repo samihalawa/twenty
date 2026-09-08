@@ -330,7 +330,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
     const observedSteps=[], callsBeforeRound=used;
-    let result = await generateText({...options, tools, toolChoice: finalizeWithoutTools ? 'none' : options.toolChoice, messages,
+    let result = await generateText({...options, tools, toolChoice: finalizeWithoutTools ? 'none' : options.toolChoice, output: finalizeWithoutTools ? undefined : options.output, messages,
       onStepFinish:async step=>{
         observedSteps.push(step);
         await options.onStepFinish?.(step);
@@ -382,6 +382,18 @@ async function generateWithContinuation(generateText, options, policy = {}) {
           const checked = structuredValidation.parseValidatedResponse(result.reasoningText, validateStructured);
           if (checked?.success) result = {...result, text: JSON.stringify(checked.value), nativeValidationError: undefined};
         } catch {}
+      }
+      // The terminal tool-disabled turn deliberately avoids the provider's
+      // failing structured-output transport. Accept its ordinary text only
+      // after the same closed schema validates the complete value locally.
+      if (finalizeWithoutTools && typeof result.text === 'string' && result.text.trim()) {
+        try {
+          const checked = structuredValidation.parseValidatedResponse(result.text, validateStructured);
+          if (checked?.success) result = {...result, text: JSON.stringify(checked.value), nativeValidationError: undefined};
+          else result = {...result, nativeValidationError: structuredValidation.diagnoseInvalidResponse(result.text,validateStructured)};
+        } catch(error) {
+          result = {...result, nativeValidationError: error instanceof Error ? error.message : 'Final response does not match the configured schema'};
+        }
       }
     }
     const roundSteps = result.steps ?? [];
@@ -458,7 +470,7 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     // is actually exhausted.
     const stopReason=policy.shouldContinue?.()===false?'CREDITS_UNAVAILABLE':used>=maxCalls||checked.calls>=maxCalls?'TOOL_BUDGET_EXHAUSTED':stalledRounds>maxRepairs?'NO_PROGRESS_REPAIR_LIMIT_REACHED':null;
     if (stopReason) {
-      const finalizationShape=finalizeWithoutTools?' [finalization=tool-choice-none-default-stop; observedSteps='+(roundSteps.length||observedSteps.length)+'; finish='+String(result.finishReason??'unknown')+']':'';
+      const finalizationShape=finalizeWithoutTools?' [finalization=tool-choice-none-validated-text; observedSteps='+(roundSteps.length||observedSteps.length)+'; finish='+String(result.finishReason??'unknown')+']':'';
       return {...result,nativeExecutionError:stopReason+finalizationShape+': '+checked.issues.join('; '),text:'STATUS: TOOLING_BLOCKED\nNATIVE_CONTINUATION_STOP: '+stopReason+finalizationShape+'\nNATIVE_CONTINUATION_REQUIRED: '+checked.issues.join('\n')+'\nNo completed outcome is verified. Existing native run logs preserve source pages and successful mutations; reconcile before retrying.',finishReason:'stop',usage,totalUsage:usage,steps,response:result.response};
     }
     const skeleton=policy.responseSchema ? JSON.stringify(schemaSkeleton(policy.responseSchema)) : '';

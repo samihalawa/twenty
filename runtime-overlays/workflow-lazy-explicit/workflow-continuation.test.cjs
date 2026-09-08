@@ -455,7 +455,7 @@ test('validated AI SDK structured output is canonical when provider text is empt
  assert.equal(result.text,JSON.stringify(exact));
 });
 
-test('empty structured stop after completed native reads retries final schema response with tool choice none',async()=>{
+test('empty structured stop after completed native reads retries as locally validated JSON text',async()=>{
  const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
  const exact={status:'PREPARED',content:'Verified public content'};
  let rounds=0;
@@ -464,13 +464,15 @@ test('empty structured stop after completed native reads retries final schema re
   if(rounds===1){
    assert.equal(Object.keys(options.tools).length,1);
    assert.equal(typeof options.stopWhen,'function');
+   assert.deepEqual(options.output,{kind:'schema'});
    return {text:'',steps:[],finishReason:'stop',usage:{},nativeValidationError:'The provider returned no final JSON text.'};
   }
   assert.equal(Object.keys(options.tools).length,1);
   assert.equal(options.toolChoice,'none');
   assert.equal(options.stopWhen,undefined);
-  return {text:'',output:exact,steps:[],finishReason:'stop',usage:{}};
- },{messages:[{role:'user',content:'prepare exact case'}],tools:{execute_tool:{}}},{enabled:true,responseSchema:schema,requireOperatorStatus:true,maxRepairs:2});
+  assert.equal(options.output,undefined);
+  return {text:JSON.stringify(exact),steps:[],finishReason:'stop',usage:{}};
+ },{messages:[{role:'user',content:'prepare exact case'}],tools:{execute_tool:{}},output:{kind:'schema'}},{enabled:true,responseSchema:schema,requireOperatorStatus:true,maxRepairs:2});
  assert.equal(rounds,2);
  assert.equal(result.text,JSON.stringify(exact));
 });
