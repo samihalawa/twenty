@@ -142,7 +142,8 @@ test('actual opportunity mutation is blocked until exact pages are complete and 
  }}}},{enabled:true});
  assert.equal(writes,1);
  assert.equal(normalizedWrite.expectedUpdatedAt,'2026-09-08T03:27:39.156Z');assert.equal(normalizedWrite.updatedAt,undefined);
- assert.deepEqual(normalizedWrite.evidenceJSON,{...freshEvidence({sourceCoverage:{complete:true,checkedAt:'2026-09-08T03:50:43.454Z',sourceIds:[],fingerprint:'hash'}}),candidateDecisions:[]});assert.equal(normalizedWrite.stateEvidence,undefined);
+ assert.equal(normalizedWrite.evidenceJSON.sourceCoverage.complete,true);assert.equal(normalizedWrite.evidenceJSON.sourceCoverage.fingerprint,'hash');assert.ok(Date.parse(normalizedWrite.evidenceJSON.sourceCoverage.checkedAt)>=Date.parse('2026-09-08T03:50:43.454Z'));
+ assert.deepEqual(normalizedWrite.evidenceJSON.nextAction,freshEvidence().nextAction);assert.equal(normalizedWrite.evidenceJSON.lastReconciledAt,freshEvidence().lastReconciledAt);assert.deepEqual(normalizedWrite.evidenceJSON.candidateDecisions,[]);assert.equal(normalizedWrite.stateEvidence,undefined);
 });
 test('structured parse recovery keeps real step messages inside the continuation loop',async()=>{
  let rounds=0;const originalError=new Error('native structured parse');
@@ -167,7 +168,8 @@ test('observed top-level opportunity evidence fields are normalized into the str
   if(input.toolName==='update_one_opportunity'){normalized=input.arguments;return {success:true,result:{id:'case'}};}
   return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor:0,nextCursor:null,hasNextPage:false,totalSections:0,fingerprint:'hash',sections:[]}};
  }}}},{enabled:true});
- assert.deepEqual(normalized.evidenceJSON,{...freshEvidence(),sourceCoverage:{...freshEvidence().sourceCoverage,fingerprint:'hash'}});
+ assert.equal(normalized.evidenceJSON.sourceCoverage.complete,true);assert.equal(normalized.evidenceJSON.sourceCoverage.fingerprint,'hash');assert.ok(Date.parse(normalized.evidenceJSON.sourceCoverage.checkedAt)>=Date.parse('2026-09-08T03:50:43.454Z'));
+ assert.deepEqual(normalized.evidenceJSON.nextAction,freshEvidence().nextAction);assert.equal(normalized.evidenceJSON.lastReconciledAt,freshEvidence().lastReconciledAt);
  assert.equal(normalized.sourceCoverage,undefined);assert.equal(normalized.nextAction,undefined);assert.equal(normalized.lastReconciledAt,'2026-09-08T03:50:43.454Z');
 });
 test('opportunity update binds the latest exact native read revision without weakening CAS',async()=>{
@@ -187,6 +189,21 @@ test('opportunity update binds the latest exact native read revision without wea
  }}}},{enabled:true});
  assert.equal(exactWrite.expectedUpdatedAt,'2026-09-08T04:25:56.842Z');
  assert.equal(otherWrite.expectedUpdatedAt,'other-explicit');
+});
+test('duplicate top-level evidence controls are always removed after structured normalization',async()=>{
+ let normalized;
+ await generateWithContinuation(async opts=>{
+  const execute=opts.tools.execute_tool.execute;
+  await execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:0}});
+  const evidence=freshEvidence();
+  await execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:evidence,sourceCoverage:evidence.sourceCoverage,nextAction:evidence.nextAction}});
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{execute_tool:{execute:async input=>{
+  if(input.toolName==='update_one_opportunity'){normalized=input.arguments;return {success:true,result:{id:'case'}};}
+  return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor:0,nextCursor:null,hasNextPage:false,totalSections:0,fingerprint:'hash',sections:[]}};
+ }}}},{enabled:true});
+ assert.equal(normalized.sourceCoverage,undefined);assert.equal(normalized.nextAction,undefined);
+ assert.equal(normalized.evidenceJSON.sourceCoverage.fingerprint,'hash');assert.ok(Number.isFinite(Date.parse(normalized.evidenceJSON.sourceCoverage.checkedAt)));
 });
 test('only exact registered tool with known malformed channel suffix is repaired',async()=>{
  const input='{ "id": "exact" }';
