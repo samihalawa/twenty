@@ -51,12 +51,22 @@ function inspectContinuation(steps, text) {
   if (completed && failedWrites.length && !writes.some(c=>c.ok)) issues.push('Every attempted business mutation failed; COMPLETED is false. Learn the exact failed tool schema and repair the intended permitted operation, then read it back, or report TOOLING_BLOCKED. Native update_one_opportunity uses id plus direct fields, never opportunityId/set.');
   const report=String(text).replace(/\*\*/g,'');
   if(/STATUS\s*:\s*NEEDS_EVIDENCE\b/.test(report) && /MISSING_EVIDENCE\s*:\s*(?:none|nothing|no missing evidence)\b/i.test(report)) issues.push('NEEDS_EVIDENCE contradicts MISSING_EVIDENCE:none. An unread or unavailable source must be identified for that status. If coverage is complete, finish the supported reconciliation and read it back; waiting for another person is a business state to record, not an evidence gap.');
-  if(/STATUS\s*[:*\s]+(?:COMPLETED|NO_WORK|NEEDS_EVIDENCE|ENTITY_CONFLICT)\b/.test(String(text).replace(/\*\*/g,''))){
+  if(/STATUS\s*[:*\s]+(?:COMPLETED|NO_WORK|NEEDS_EVIDENCE|ENTITY_CONFLICT|TOOLING_BLOCKED|ATTEMPTED_UNVERIFIED)\b/.test(String(text).replace(/\*\*/g,''))){
     const run={state:{stepInfos:{native:{result:{response:text}}}},stepLogs:{native:{details:{toolCalls:calls.map(c=>({toolName:'execute_tool',input:{toolName:c.name,arguments:c.args},state:c.ok?'success':'error',output:{success:c.ok,result:c.output}}))}}}};
     const verdict=inspectOperatorExecution(run,'native');
     issues.push(...verdict.problems.map(problem=>'Independent native execution verification: '+problem));
   }
   return { issues:[...new Set(issues)], calls: calls.length };
+}
+function downgradeIncompleteNoWork(text, checked) {
+  const value=String(text??'');
+  if(!/STATUS\s*:\s*NO_WORK\b/.test(value.replace(/\*\*/g,'')) || !checked.issues.length || checked.calls<1)return null;
+  const allowed=[
+    /^Independent native execution verification: NO_WORK discovery pagination is incomplete$/,
+    /^Independent native execution verification: NO_WORK requires full native content and an explicit ignored disposition for every discovered candidate$/
+  ];
+  if(checked.issues.some(issue=>!allowed.some(pattern=>pattern.test(issue))))return null;
+  return value.replace(/(STATUS\s*:\s*)NO_WORK\b/,'$1ATTEMPTED_UNVERIFIED')+'\nNATIVE_EXECUTION_PENDING: '+checked.issues.join('; ')+'\nPreviously read native source pages remain available to the next scheduled continuation.';
 }
 function trackCoverage(prior,p) {
   const state=prior?.fingerprint===p.fingerprint?prior:{fingerprint:p.fingerprint,ranges:[],terminalEnd:null,sections:new Map()};
@@ -187,6 +197,10 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     if(completeCases.length===1 && typeof result.text==='string')try{const value=JSON.parse(result.text);if(value && typeof value==='object' && Object.hasOwn(value,'sourceFingerprint')){value.sourceFingerprint=completeCases[0].fingerprint;result={...result,text:JSON.stringify(value)};}}catch{}
     usage = addUsage(usage,result.totalUsage ?? result.usage);
     let checked = inspectContinuation(steps,result.text);
+    if(result.finishReason!=='length' && !result.nativeValidationError){
+      const downgraded=downgradeIncompleteNoWork(result.text,checked);
+      if(downgraded!==null){result={...result,text:downgraded};checked=inspectContinuation(steps,result.text);}
+    }
     stalledRounds = used > callsBeforeRound ? 0 : stalledRounds + 1;
     if(result.finishReason === 'length') checked.issues.push('The previous response reached the fixed output-token limit and is incomplete. Return one concise valid final response matching the original schema; retain the existing native reads and do not repeat completed tool calls.');
     if(result.nativeValidationError)checked.issues.push('Final response validation failed: '+result.nativeValidationError+'. Return valid JSON matching the original response schema; preserve the actual source facts and tool outcomes.');
@@ -233,4 +247,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork};

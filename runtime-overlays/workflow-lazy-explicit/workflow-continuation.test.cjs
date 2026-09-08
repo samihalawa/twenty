@@ -197,6 +197,24 @@ test('false NO_WORK after complete case reads is fed back through the independen
  assert.ok(checked.issues.some(x=>x.includes('NO_WORK has no bounded source search')));
 });
 
+test('incomplete NO_WORK pagination is downgraded once without wasting repair rounds',async()=>{
+ let rounds=0;
+ const discovery=step('find_many_messages',{receivedAt:{gte:'2026-09-01T00:00:00.000Z'},offset:0,limit:5},{records:[{id:'message-1',text:'Human request'}],count:1,hasNextPage:true});
+ const result=await generateWithContinuation(async()=>{rounds++;return receipt([discovery],'STATUS: NO_WORK');},{tools:{}},{enabled:true,maxRepairs:3});
+ assert.equal(rounds,1);
+ assert.match(result.text,/STATUS: ATTEMPTED_UNVERIFIED/);
+ assert.match(result.text,/NATIVE_EXECUTION_PENDING/);
+ assert.deepEqual(inspectContinuation(result.steps,result.text).issues,[]);
+});
+
+test('tooling blocked and attempted statuses require real native evidence',()=>{
+ assert.ok(inspectContinuation([],'STATUS: TOOLING_BLOCKED').issues.some(x=>x.includes('no failed native tool call')));
+ assert.ok(inspectContinuation([],'STATUS: ATTEMPTED_UNVERIFIED').issues.some(x=>x.includes('no native tool call')));
+ const failed={toolCalls:[{toolCallId:'bad',toolName:'execute_tool',input:{toolName:'find_many_messages',arguments:{offset:0}}}],toolResults:[{type:'tool-error',toolCallId:'bad',error:'provider unavailable'}],content:[]};
+ assert.deepEqual(inspectContinuation([failed],'STATUS: TOOLING_BLOCKED').issues,[]);
+ assert.deepEqual(inspectContinuation([step('find_one_person',{id:'person'},{id:'person'})],'STATUS: ATTEMPTED_UNVERIFIED').issues,[]);
+});
+
 test('structured parse recovery without SDK messages retains actual native tool history and continues',async()=>{
  let rounds=0;const first=page(0,2);first.response={id:'provider-response'};
  const result=await generateWithContinuation(async options=>{

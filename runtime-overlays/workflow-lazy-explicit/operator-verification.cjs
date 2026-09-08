@@ -125,7 +125,7 @@ function inspectOperatorExecution(run, agentStepId) {
   const writes = successful.filter((c) => /^(update|create|upsert)_/.test(c.name));
   const problems = [];
   if (status === "NEEDS_EVIDENCE" && /MISSING_EVIDENCE\s*:\s*(?:none|nothing|no missing evidence)\b/i.test(report.replace(/\*\*/g, ""))) problems.push("NEEDS_EVIDENCE contradicts an explicitly empty missing-evidence list");
-  if (!["COMPLETED", "NO_WORK", "NEEDS_EVIDENCE", "ENTITY_CONFLICT"].includes(status ?? "")) problems.push("Agent business status is " + (status ?? "missing"));
+  if (!["COMPLETED", "NO_WORK", "NEEDS_EVIDENCE", "ENTITY_CONFLICT", "TOOLING_BLOCKED", "ATTEMPTED_UNVERIFIED"].includes(status ?? "")) problems.push("Agent business status is " + (status ?? "missing"));
   const sources = ["messages", "calendar_events", "interactions"];
   const sourceReads = reads.filter((c) => sources.some((s) => c.name === "find_many_" + s));
   for (const id of new Set(contextPages.map((c) => c.args?.opportunityId))) if (!hasCompleteContext(String(id), Infinity)) problems.push("Incomplete context pages for " + id + "; available pages are not missing source evidence");
@@ -133,6 +133,8 @@ function inspectOperatorExecution(run, agentStepId) {
     if (!sourceReads.length && !contextPages.length) problems.push("Missing actual source reads");
     if (!writes.length) problems.push("Claimed completed work has no persisted business write");
   }
+  if (status === "TOOLING_BLOCKED" && !calls.some((c) => !c.ok)) problems.push("TOOLING_BLOCKED has no failed native tool call");
+  if (status === "ATTEMPTED_UNVERIFIED" && !calls.length) problems.push("ATTEMPTED_UNVERIFIED has no native tool call");
   if (status === "NO_WORK") {
     const bounded = sourceReads.filter((c) => c.args?.receivedAt || c.args?.occurredAt || c.args?.startsAt || c.args?.and);
     if (!bounded.length) problems.push("NO_WORK has no bounded source search");
