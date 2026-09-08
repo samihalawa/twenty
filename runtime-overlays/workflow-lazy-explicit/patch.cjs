@@ -289,8 +289,8 @@ specs[2].changes.push(...[
     "            onCodeExecutionUpdate: context.onCodeExecutionUpdate,\n            nativeCaseContext: context.nativeCaseContext\n        };"
   ],
   [
-    "            const result = await this.toolExecutorService.dispatch(\n                entry,\n                args,\n                fullContext\n            );",
-    "            if (fullContext.requireExplicitObjectGrants && toolName === 'update_one_opportunity') require('/opt/workflow-lazy-tools/case-context-guard.cjs').assertOpportunityWrite(fullContext.nativeCaseContext, args);\n            const result = await this.toolExecutorService.dispatch(\n                entry,\n                args,\n                fullContext\n            );\n            if (fullContext.requireExplicitObjectGrants) require('/opt/workflow-lazy-tools/case-context-guard.cjs').observe(fullContext.nativeCaseContext, toolName, result);"
+    "            const result = await this.toolExecutorService.dispatch(entry, args, fullContext);",
+    "            if (fullContext.requireExplicitObjectGrants && toolName === 'update_one_opportunity') require('/opt/workflow-lazy-tools/case-context-guard.cjs').assertOpportunityWrite(fullContext.nativeCaseContext, args);\n            const result = await this.toolExecutorService.dispatch(entry, args, fullContext);\n            if (fullContext.requireExplicitObjectGrants) require('/opt/workflow-lazy-tools/case-context-guard.cjs').observe(fullContext.nativeCaseContext, toolName, result);"
   ]
 ]);
 
