@@ -162,6 +162,11 @@ await test('workflow lazy returns existing text result contract',async()=>{
  assert.equal(calls.length,1);
  assert.equal(calls[0].maxOutputTokens,4096);
 });
+await test('agent output-token configuration overrides the model catalog default',async()=>{
+ calls.length=0;
+ await executor.executeAgent({...execArgs,agent:{...agent,modelConfiguration:{maxOutputTokens:8192}},toolLoadingStrategy:'lazy-workflow-explicit'});
+ assert.equal(calls[0].maxOutputTokens,8192);
+});
 await test('workflow lazy retains second structured-output call',async()=>{
  calls.length=0;
  const out=await executor.executeAgent({...execArgs,agent:{...agent,responseFormat:{type:'json',schema:{type:'object'}}},toolLoadingStrategy:'lazy-workflow-explicit'});

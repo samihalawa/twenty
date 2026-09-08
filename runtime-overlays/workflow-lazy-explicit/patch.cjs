@@ -23,7 +23,7 @@ const specs = [
     "changes": [
       [
         "const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);",
-        "const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);\n            const maxOutputTokens = this.aiModelRegistryService.getEffectiveModelConfig(registeredModel.modelId).maxOutputTokens;"
+        "const registeredModel = await this.aiModelRegistryService.resolveModelForAgent(agent);\n            const configuredMaxOutputTokens = agent?.modelConfiguration?.maxOutputTokens;\n            const maxOutputTokens = Number.isInteger(configuredMaxOutputTokens) && configuredMaxOutputTokens > 0 ? configuredMaxOutputTokens : this.aiModelRegistryService.getEffectiveModelConfig(registeredModel.modelId).maxOutputTokens;"
       ],
       [
         "model: registeredModel.model,\n                messages:",
