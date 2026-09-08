@@ -620,6 +620,23 @@ await test('native parse recovery validates final output retained only in comple
  assert.match(ambiguous.nativeValidationError,/multiple different schema-valid final objects/);
 });
 
+await test('native parse recovery reads AI SDK error and step structured-output channels',async()=>{
+ const {recoverStructuredParse}=require('./schema-validation.cjs'),validate=compileResponseSchema(exactSchema);
+ const value={runStatus:'PARTIAL',processed:1},json=JSON.stringify(value),base={text:'',finishReason:'stop',usage};
+ const cases=[
+  [{...base,output:value},[]],
+  [{...base,response:{messages:[{role:'assistant',content:[{type:'text',text:json}]}]}},[]],
+  [{...base,response:{body:JSON.stringify({choices:[{message:{content:json}}]})}},[]],
+  [base,[{output:value}]],
+  [base,[{response:{body:JSON.stringify({choices:[{message:{reasoning_content:json}}]})}}]]
+ ];
+ for(const [error,steps] of cases){
+  const recovered=recoverStructuredParse(error,validate,true,steps,true);
+  assert.deepEqual(JSON.parse(recovered.text),value);
+  assert.equal(recovered.nativeValidationError,undefined);
+ }
+});
+
 await test('metadata execution uses authenticated user identity and ignores actor values in payload',async()=>{
  const p=PATCHES.find(x=>x.path.endsWith('logic-function.resolver.js'));
  let got;

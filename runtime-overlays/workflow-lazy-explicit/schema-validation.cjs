@@ -89,22 +89,34 @@ function structuredOutputCandidates(error, steps = []) {
     if(typeof value!=='string'||!value.trim()||Buffer.byteLength(value,'utf8')>262144)return;
     candidates.push({channel,text:value});
   };
+  const addValue=(channel,value)=>{
+    if(value===null||typeof value!=='object')return;
+    try{add(channel,JSON.stringify(value));}catch{}
+  };
+  const responseCandidates=(prefix,response)=>{
+    for(const message of Array.isArray(response?.messages)?response.messages:[]){
+      if(message?.role!=='assistant')continue;
+      if(typeof message.content==='string')add(prefix+'.messages.content',message.content);
+      for(const part of Array.isArray(message.content)?message.content:[])if(part?.type==='text'||part?.type==='reasoning')add(prefix+'.messages.'+part.type,part.text);
+    }
+    let body=response?.body;
+    if(typeof body==='string'&&Buffer.byteLength(body,'utf8')<=1048576)try{body=JSON.parse(body);}catch{}
+    for(const choice of Array.isArray(body?.choices)?body.choices:[]){
+      add(prefix+'.body.content',choice?.message?.content);
+      add(prefix+'.body.reasoning',choice?.message?.reasoning);
+      add(prefix+'.body.reasoning_content',choice?.message?.reasoning_content);
+    }
+  };
   add('error.text',error?.text);
+  add('error.reasoningText',error?.reasoningText);
+  addValue('error.output',error?.output);
+  responseCandidates('error.response',error?.response);
   for(const step of [...steps].reverse()){
     add('step.text',step?.text);
     add('step.reasoningText',step?.reasoningText);
+    addValue('step.output',step?.output);
     for(const part of Array.isArray(step?.content)?step.content:[])if(part?.type==='text'||part?.type==='reasoning')add('step.content.'+part.type,part.text);
-    for(const message of Array.isArray(step?.response?.messages)?step.response.messages:[]){
-      if(message?.role!=='assistant')continue;
-      if(typeof message.content==='string')add('response.messages.content',message.content);
-      for(const part of Array.isArray(message.content)?message.content:[])if(part?.type==='text'||part?.type==='reasoning')add('response.messages.'+part.type,part.text);
-    }
-    const body=step?.response?.body;
-    for(const choice of Array.isArray(body?.choices)?body.choices:[]){
-      add('response.body.content',choice?.message?.content);
-      add('response.body.reasoning',choice?.message?.reasoning);
-      add('response.body.reasoning_content',choice?.message?.reasoning_content);
-    }
+    responseCandidates('step.response',step?.response);
   }
   const unique=new Map();
   for(const candidate of candidates)if(!unique.has(candidate.text))unique.set(candidate.text,candidate);
