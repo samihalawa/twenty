@@ -123,6 +123,22 @@ function structuredOutputCandidates(error, steps = []) {
   return [...unique.values()];
 }
 
+function structuredOutputShape(error,steps=[]){
+  const responseShape=response=>{
+    let body=response?.body;
+    if(typeof body==='string'&&Buffer.byteLength(body,'utf8')<=1048576)try{body=JSON.parse(body);}catch{}
+    return {present:!!response,keys:response&&typeof response==='object'?Object.keys(response).sort():[],bodyType:Array.isArray(body)?'array':typeof body,choices:Array.isArray(body?.choices)?body.choices.map(choice=>({finishReason:choice?.finish_reason??null,messageKeys:choice?.message&&typeof choice.message==='object'?Object.keys(choice.message).sort():[]})):[]};
+  };
+  const itemShape=item=>({
+    keys:item&&typeof item==='object'?Object.keys(item).sort():[],finishReason:item?.finishReason??null,rawFinishReason:item?.rawFinishReason??null,
+    textBytes:typeof item?.text==='string'?Buffer.byteLength(item.text,'utf8'):null,reasoningBytes:typeof item?.reasoningText==='string'?Buffer.byteLength(item.reasoningText,'utf8'):null,
+    outputType:item?.output===null?'null':Array.isArray(item?.output)?'array':typeof item?.output,
+    contentTypes:Array.isArray(item?.content)?item.content.map(part=>part?.type??typeof part):[],toolCalls:Array.isArray(item?.toolCalls)?item.toolCalls.length:null,toolResults:Array.isArray(item?.toolResults)?item.toolResults.length:null,
+    response:responseShape(item?.response)
+  });
+  return JSON.stringify({error:itemShape(error),steps:steps.slice(-4).map(itemShape)});
+}
+
 function recoverStructuredParse(error, validate, isNoObjectError, steps = [], allowRepair = false) {
   if (!isNoObjectError || !validate || error.finishReason === 'length') throw error;
   const candidates=structuredOutputCandidates(error,steps);
@@ -141,10 +157,10 @@ function recoverStructuredParse(error, validate, isNoObjectError, steps = [], al
   }
   if(valid.size!==1) {
     if(!allowRepair)throw error;
-    const observed=candidates.length?candidates.map(candidate=>candidate.channel+'='+Buffer.byteLength(candidate.text,'utf8')+'B').join(', '):'none';
+    const observed=candidates.length?candidates.map(candidate=>candidate.channel+'='+Buffer.byteLength(candidate.text,'utf8')+'B').join(', '):'none; shape='+structuredOutputShape(error,steps);
     const reason=valid.size>1?'The provider returned multiple different schema-valid final objects.':failures[0]??'The provider returned no final JSON text.';
     return {text:typeof error.text==='string'?error.text:'',usage:error.usage,finishReason:error.finishReason,steps,nativeValidationError:reason+' Observed output channels: '+observed+'.'};
   }
 }
 
-module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError, diagnoseInvalidResponse, structuredOutputCandidates, recoverStructuredParse};
+module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError, diagnoseInvalidResponse, structuredOutputCandidates, structuredOutputShape, recoverStructuredParse};

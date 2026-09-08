@@ -637,6 +637,14 @@ await test('native parse recovery reads AI SDK error and step structured-output 
  }
 });
 
+await test('empty structured recovery reports only bounded response shape metadata',async()=>{
+ const {recoverStructuredParse}=require('./schema-validation.cjs'),validate=compileResponseSchema(exactSchema);
+ const recovered=recoverStructuredParse({text:'',finishReason:'stop',response:{body:{choices:[{finish_reason:'tool_calls',message:{tool_calls:[{secret:'never echo'}]}}]}}},validate,true,[{content:[{type:'tool-call',input:{secret:'never echo'}}],toolCalls:[{}],toolResults:[]}],true);
+ assert.match(recovered.nativeValidationError,/shape=/);
+ assert.match(recovered.nativeValidationError,/tool-call/);
+ assert.doesNotMatch(recovered.nativeValidationError,/never echo/);
+});
+
 await test('metadata execution uses authenticated user identity and ignores actor values in payload',async()=>{
  const p=PATCHES.find(x=>x.path.endsWith('logic-function.resolver.js'));
  let got;
