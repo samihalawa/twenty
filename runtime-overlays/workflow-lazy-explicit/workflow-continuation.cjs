@@ -144,7 +144,16 @@ async function generateWithContinuation(generateText, options, policy = {}) {
   const tools = Object.fromEntries(Object.entries(options.tools ?? {}).map(([name,tool]) => [name, !tool.execute ? tool : {...tool,execute:async (...args)=>{
     if (used >= maxCalls) throw new Error('NATIVE_TOOL_BUDGET_EXHAUSTED: preserve unfinished work for continuation');
     used++;
-    const input=args[0], actualName=name==='execute_tool'?input?.toolName:name, actualArgs=name==='execute_tool'?input?.arguments:input;
+    const input=args[0], actualName=name==='execute_tool'?input?.toolName:name;
+    let actualArgs=name==='execute_tool'?input?.arguments:input;
+    if(actualName==='update_one_opportunity' && actualArgs && typeof actualArgs==='object' && !Array.isArray(actualArgs)) {
+      const normalizedArgs={...actualArgs};
+      if(normalizedArgs.expectedUpdatedAt===undefined && typeof normalizedArgs.updatedAt==='string') { normalizedArgs.expectedUpdatedAt=normalizedArgs.updatedAt; delete normalizedArgs.updatedAt; }
+      if(normalizedArgs.stateEvidence && typeof normalizedArgs.stateEvidence==='object' && typeof normalizedArgs.stateEvidence.markdown!=='string') { normalizedArgs.evidenceJSON={...normalizedArgs.stateEvidence,...(normalizedArgs.evidenceJSON??{})}; delete normalizedArgs.stateEvidence; }
+      if(Array.isArray(normalizedArgs.candidateDecisions) && !Array.isArray(normalizedArgs.evidenceJSON?.candidateDecisions)) { normalizedArgs.evidenceJSON={...(normalizedArgs.evidenceJSON??{}),candidateDecisions:normalizedArgs.candidateDecisions}; delete normalizedArgs.candidateDecisions; }
+      actualArgs=normalizedArgs;
+      if(name==='execute_tool') input.arguments=actualArgs;
+    }
     if(actualName==='app_crm_case_context' && Number(actualArgs?.cursor??0)>0) {
       const bound=casePages.get(actualArgs.opportunityId);
       if(!bound)throw Error('CASE_SNAPSHOT_NOT_BOUND: first read cursor0 for this exact case in this native execution.');

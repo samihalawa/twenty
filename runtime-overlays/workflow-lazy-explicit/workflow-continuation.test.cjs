@@ -124,7 +124,7 @@ test('other native agent execution remains untouched',async()=>{
  assert.equal(await generateWithContinuation(async opts=>{seen=opts;return result;},options,{enabled:false}),result);assert.equal(seen,options);
 });
 test('actual opportunity mutation is blocked until exact pages are complete and evidence JSON is valid',async()=>{
- let writes=0;
+ let writes=0,normalizedWrite;
  await generateWithContinuation(async opts=>{
   const execute=opts.tools.execute_tool.execute;
   await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'case'}}),/CASE_CONTEXT_INCOMPLETE/);
@@ -133,13 +133,15 @@ test('actual opportunity mutation is blocked until exact pages are complete and 
   await execute({toolName:'app_crm_case_context',arguments:{opportunityId:'case',cursor:2}});
   await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'other'}}),/CASE_CONTEXT_INCOMPLETE/);
   await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'case',stateEvidence:{markdown:'{\\"invalid\\":true}'}}}),/INVALID_STATE_EVIDENCE_JSON/);
-  await execute({toolName:'update_one_opportunity',arguments:{id:'case',stateEvidence:{markdown:JSON.stringify({sourceCoverage:{complete:true,fingerprint:'hash'}})}}});
+  await execute({toolName:'update_one_opportunity',arguments:{id:'case',updatedAt:'2026-09-08T03:27:39.156Z',stateEvidence:{sourceCoverage:{complete:true,fingerprint:'hash'}},candidateDecisions:[]}});
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{execute_tool:{execute:async input=>{
-  if(input.toolName==='update_one_opportunity'){writes++;return {success:true,result:{id:'case'}};}
+  if(input.toolName==='update_one_opportunity'){writes++;normalizedWrite=input.arguments;return {success:true,result:{id:'case'}};}
   const cursor=input.arguments.cursor;return {success:true,result:{mode:'READ_CASE',opportunityId:'case',cursor,nextCursor:cursor===0?2:null,hasNextPage:cursor===0,fingerprint:'hash'}};
  }}}},{enabled:true});
  assert.equal(writes,1);
+ assert.equal(normalizedWrite.expectedUpdatedAt,'2026-09-08T03:27:39.156Z');assert.equal(normalizedWrite.updatedAt,undefined);
+ assert.deepEqual(normalizedWrite.evidenceJSON,{sourceCoverage:{complete:true,fingerprint:'hash'},candidateDecisions:[]});assert.equal(normalizedWrite.stateEvidence,undefined);
 });
 test('structured parse recovery keeps real step messages inside the continuation loop',async()=>{
  let rounds=0;const originalError=new Error('native structured parse');
