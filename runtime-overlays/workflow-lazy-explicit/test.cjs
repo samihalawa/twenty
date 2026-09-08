@@ -3,6 +3,10 @@
 const PATCHES=require('./patch.cjs').preparePatches();
 
 const vm=require('node:vm'),assert=require('node:assert/strict');
+const aiSdkPatch=PATCHES.find(p=>p.path.endsWith('node_modules/ai/dist/index.js'));
+assert(aiSdkPatch);
+assert.equal((aiSdkPatch.patched.match(/typeof toolCall\.input === "string" \? toolCall\.input : JSON\.stringify\(toolCall\.input \?\? \{\}\)/g)??[]).length,2);
+assert.equal((aiSdkPatch.patched.match(/toolCall\.input\.trim\(\)/g)??[]).length,0);
 const fallback=new Proxy({}, {get:()=>function(){return ()=>undefined}});
 const decorators={UseGuards:()=>()=>{},UsePipes:()=>()=>{},UseFilters:()=>()=>{},Injectable:()=>()=>{},Inject:()=>()=>{},Logger:class{log(){} warn(){} error(){}}};
 function moduleClass(source,name,overrides={}){

@@ -532,6 +532,25 @@ specs.find(x=>x.path.endsWith('logic-function/logic-function.workflow-action.js'
  ['        return {\n            result: result.data || {}\n        };','        return {\n            result: await require("/opt/workflow-lazy-tools/native-preparation.cjs").enqueueVerifiedPreparation({input:workflowActionInput,data:result.data||{},runInfo,currentStepId,getRunner:()=>this.moduleRef.get(_preparationRunner.WorkflowRunnerWorkspaceService,{strict:false})})\n        };']
 );
 
+// AI SDK 6 expects provider tool input as JSON text, while some compatible
+// providers return the already parsed JSON object. Normalize at the parser
+// boundary before trim/schema validation so the existing repair hook remains
+// responsible only for genuinely malformed input.
+specs.push({
+  path:'../../../node_modules/ai/dist/index.js',
+  sha256:'8e8579a45bd2e3a99c1cd3b1bfd8dda7a9f9ffed0ad8e32148dafe4861f1862c',
+  changes:[
+    [
+      'async function parseProviderExecutedDynamicToolCall(toolCall) {\n  const parseResult = toolCall.input.trim() === "" ? { success: true, value: {} } : await (0, import_provider_utils14.safeParseJSON)({ text: toolCall.input });',
+      'async function parseProviderExecutedDynamicToolCall(toolCall) {\n  const inputText = typeof toolCall.input === "string" ? toolCall.input : JSON.stringify(toolCall.input ?? {});\n  const parseResult = inputText.trim() === "" ? { success: true, value: {} } : await (0, import_provider_utils14.safeParseJSON)({ text: inputText });'
+    ],
+    [
+      '  const schema = (0, import_provider_utils14.asSchema)(tool2.inputSchema);\n  const parseResult = toolCall.input.trim() === "" ? await (0, import_provider_utils14.safeValidateTypes)({ value: {}, schema }) : await (0, import_provider_utils14.safeParseJSON)({ text: toolCall.input, schema });',
+      '  const schema = (0, import_provider_utils14.asSchema)(tool2.inputSchema);\n  const inputText = typeof toolCall.input === "string" ? toolCall.input : JSON.stringify(toolCall.input ?? {});\n  const parseResult = inputText.trim() === "" ? await (0, import_provider_utils14.safeValidateTypes)({ value: {}, schema }) : await (0, import_provider_utils14.safeParseJSON)({ text: inputText, schema });'
+    ]
+  ]
+});
+
 function preparePatches() {
   return specs.map(spec => {
     const absolutePath = path.join(root, spec.path);
