@@ -215,6 +215,25 @@ test('tooling blocked and attempted statuses require real native evidence',()=>{
  assert.deepEqual(inspectContinuation([step('find_one_person',{id:'person'},{id:'person'})],'STATUS: ATTEMPTED_UNVERIFIED').issues,[]);
 });
 
+test('meeting outcome cannot finalize before every discovered event and participant set is opened',()=>{
+ const events=[{id:'event-1',title:'First',startsAt:'2026-09-08T07:00:00Z',endsAt:'2026-09-08T07:30:00Z'},{id:'event-2',title:'Second',startsAt:'2026-09-08T08:00:00Z',endsAt:'2026-09-08T08:30:00Z'}];
+ const discovery=step('find_many_calendar_events',{and:[{startsAt:{gte:'2026-09-08T01:00:00Z'}}],offset:0,limit:5},{records:events,count:2,hasNextPage:true});
+ const first=[discovery,step('find_one_calendar_event',{id:'event-1'},events[0]),step('find_many_calendar_event_participants',{and:[{calendarEventId:{eq:'event-1'}}]},{records:[],hasNextPage:false})];
+ let issues=inspectContinuation(first,'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: opportunity link');
+ assert.ok(issues.issues.some(x=>x.includes('event-2')));
+ const complete=[...first,step('find_one_calendar_event',{id:'event-2'},events[1]),step('find_many_calendar_event_participants',{and:[{calendarEventId:{eq:'event-2'}}]},{records:[],hasNextPage:false})];
+ issues=inspectContinuation(complete,'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: opportunity link');
+ assert.deepEqual(issues.issues,[]);
+});
+
+test('inbox outcome cannot finalize before every discovered message body is opened',()=>{
+ const discovery=step('find_many_messages',{and:[{receivedAt:{gte:'2026-09-01T00:00:00Z'}},{receivedAt:{lt:'2026-09-08T00:00:00Z'}}],offset:0,limit:5},{records:[{id:'message-1'},{id:'message-2'}],count:2,hasNextPage:true});
+ const partial=[discovery,step('find_one_message',{id:'message-1'},{id:'message-1',text:'Body one'})];
+ assert.ok(inspectContinuation(partial,'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: exact case').issues.some(x=>x.includes('message-2')));
+ const complete=[...partial,step('find_one_message',{id:'message-2'},{id:'message-2',text:'Body two'})];
+ assert.deepEqual(inspectContinuation(complete,'STATUS: NEEDS_EVIDENCE\nMISSING_EVIDENCE: exact case').issues,[]);
+});
+
 test('structured parse recovery without SDK messages retains actual native tool history and continues',async()=>{
  let rounds=0;const first=page(0,2);first.response={id:'provider-response'};
  const result=await generateWithContinuation(async options=>{

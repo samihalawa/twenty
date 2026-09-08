@@ -128,6 +128,23 @@ function inspectOperatorExecution(run, agentStepId) {
   if (!["COMPLETED", "NO_WORK", "NEEDS_EVIDENCE", "ENTITY_CONFLICT", "TOOLING_BLOCKED", "ATTEMPTED_UNVERIFIED"].includes(status ?? "")) problems.push("Agent business status is " + (status ?? "missing"));
   const sources = ["messages", "calendar_events", "interactions"];
   const sourceReads = reads.filter((c) => sources.some((s) => c.name === "find_many_" + s));
+  const finalizedDiscovery = ["COMPLETED", "NO_WORK", "NEEDS_EVIDENCE", "ENTITY_CONFLICT"].includes(status ?? "");
+  const recordsOf = (c) => {
+    const value = c.output?.result ?? c.output?.data ?? c.output;
+    const result2 = value?.data ?? value;
+    return Array.isArray(result2?.records) ? result2.records : result2?.id ? [result2] : [];
+  };
+  if (finalizedDiscovery) {
+    for (const source of sourceReads) {
+      for (const row of recordsOf(source)) {
+        if (source.name === "find_many_messages" && typeof row.text !== "string" && !reads.some((read) => read.name === "find_one_message" && read.args?.id === row.id && recordsOf(read).some((record) => record.id === row.id && typeof record.text === "string"))) problems.push("Discovered message content not read: " + row.id);
+        if (source.name === "find_many_calendar_events") {
+          if (!reads.some((read) => read.name === "find_one_calendar_event" && read.args?.id === row.id && recordsOf(read).some((record) => record.id === row.id))) problems.push("Discovered calendar event details not read: " + row.id);
+          if (!reads.some((read) => /^find_(one|many)_calendar_event_participants$/.test(read.name) && JSON.stringify(read.args ?? {}).includes(row.id))) problems.push("Discovered calendar event participants not read: " + row.id);
+        }
+      }
+    }
+  }
   for (const id of new Set(contextPages.map((c) => c.args?.opportunityId))) if (!hasCompleteContext(String(id), Infinity)) problems.push("Incomplete context pages for " + id + "; available pages are not missing source evidence");
   if (status === "COMPLETED") {
     if (!sourceReads.length && !contextPages.length) problems.push("Missing actual source reads");
