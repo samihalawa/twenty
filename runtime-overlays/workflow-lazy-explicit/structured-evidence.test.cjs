@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
-const {prepare,update}=require('./structured-evidence.cjs');
+const {prepare,update,extendSchema}=require('./structured-evidence.cjs');
 const current={id:'case',updatedAt:'2026-09-07T11:00:00.000Z',stateEvidence:{markdown:JSON.stringify({admission:{id:'source'},manualPreparation:{run:'human'},pendingCarry:{active:true},old:'preserved'})}};
 const input={id:current.id,expectedUpdatedAt:current.updatedAt,evidenceJSON:{responseOwner:'THEM',nextAction:{kind:'ASSESSMENT',owner:'SAMI'}}};
 test('native structured evidence preserves durable state and serializes exact model judgment',()=>{
@@ -39,4 +39,14 @@ test('raw markdown evidence cannot bypass protected merge and revision checks',(
  assert.throws(()=>prepare('opportunity',{id:'x',stateEvidence:{markdown:'{}'}},prior),/REVISION_CONFLICT/);
  const p=prepare('opportunity',{id:'x',expectedUpdatedAt:prior.updatedAt,stateEvidence:{markdown:JSON.stringify({judgment:'new'})}},prior);
  const saved=JSON.parse(p.data.stateEvidence.markdown);assert.equal(saved.admission.id,'source');assert.equal(saved.manualPreparation.id,'request');assert.equal(saved.judgment,'new');
+});
+
+test('opportunity evidence schema teaches exact candidate decision contract',()=>{
+ const z=require('/app/node_modules/zod');
+ const schema=extendSchema(z.object({id:z.string(),stateEvidence:z.object({markdown:z.string().optional()}).optional()}),'opportunity',z);
+ const evidence=schema.shape.evidenceJSON.unwrap();
+ const valid={candidateDecisions:[{threadId:'4fd9093a-3bc7-4f83-aee9-d04347c2175b',decision:'EXCLUDE',reason:'Different requisition'}]};
+ assert.deepEqual(evidence.parse(valid),valid);
+ assert.throws(()=>evidence.parse({candidateDecisions:[{threadId:valid.candidateDecisions[0].threadId,decision:'SKIP',reason:'Different requisition'}]}));
+ assert.match(evidence.description,/candidateDecisions is mandatory/);
 });

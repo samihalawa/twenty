@@ -11,7 +11,15 @@ function extendSchema(schema, objectName,z) {
   const revision=z.string().datetime({offset:true}).describe('Exact updatedAt from latest native find_one; required for atomic compare-and-set.');
   if(!field)return schema.extend({expectedUpdatedAt:revision});
   if(!schema.shape[field])return schema;
-  return schema.extend({evidenceJSON:z.record(z.string(),z.unknown()).optional().describe('Structured internal evidence object. Merged into existing '+field+' and serialized by the native tool; do not escape JSON into markdown. Existing admission and manualPreparation are preserved.'),expectedUpdatedAt:z.string().datetime({offset:true}).optional().describe('Exact updatedAt from the latest find_one read. Required with evidenceJSON for atomic revision comparison.')});
+  const candidateDecision=z.object({
+    threadId:z.string().uuid().describe('Exact detached candidate thread UUID returned by app_crm_case_context.'),
+    decision:z.enum(['READ','EXCLUDE']).describe('READ only after full native message pagination; EXCLUDE only with a source-based reason.'),
+    reason:z.string().min(1).describe('Short source-based reason for reading or excluding this exact thread.'),
+  });
+  const evidenceJSON=z.object({
+    candidateDecisions:z.array(candidateDecision).optional().describe('Required when READ_CASE returns candidateThreadIds. Include every exact candidate once. Selected READ threads must be fully read before this mutation.'),
+  }).catchall(z.unknown()).describe('Structured internal evidence object. Merged into existing '+field+' and serialized by the native tool; do not escape JSON into markdown. Existing admission and manualPreparation are preserved. When READ_CASE returns candidateThreadIds, candidateDecisions is mandatory and must cover every exact ID once.');
+  return schema.extend({evidenceJSON:evidenceJSON.optional(),expectedUpdatedAt:z.string().datetime({offset:true}).optional().describe('Exact updatedAt from the latest find_one read. Required with evidenceJSON for atomic revision comparison.')});
 }
 function prepare(objectName,args,current) {
   const field=fields[objectName];
