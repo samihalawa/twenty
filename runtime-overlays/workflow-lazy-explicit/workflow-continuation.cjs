@@ -132,6 +132,20 @@ function nativeResponseMessages(steps, text) {
   if(typeof text==='string'&&text.trim())messages.push({role:'assistant',content:text});
   return messages;
 }
+function closeTruncatedJson(value) {
+  if(typeof value!=='string'||value.length>65536)return null;
+  const source=value.trim();if(!source.startsWith('{'))return null;
+  const stack=[];let inString=false,escaped=false;
+  for(const char of source){
+    if(inString){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char==='"')inString=false;continue;}
+    if(char==='"'){inString=true;continue;}
+    if(char==='{'||char==='[')stack.push(char);
+    else if(char==='}'||char===']'){const open=stack.pop();if((char==='}'&&open!=='{')||(char===']'&&open!=='['))return null;}
+  }
+  if(inString||escaped||!stack.length)return null;
+  const closed=source+stack.reverse().map(open=>open==='{'?'}':']').join('');
+  try{const parsed=JSON.parse(closed);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:null;}catch{return null;}
+}
 async function generateWithContinuation(generateText, options, policy = {}) {
   if (!policy.enabled) return generateText(options);
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
@@ -204,6 +218,10 @@ async function generateWithContinuation(generateText, options, policy = {}) {
         }
       },
       experimental_repairToolCall:async repairInput=>{
+        if(repairInput.toolCall?.toolName==='execute_tool'){
+          const repairedInput=closeTruncatedJson(repairInput.toolCall.input);
+          if(repairedInput)return {...repairInput.toolCall,input:repairedInput};
+        }
         const match=repairInput.toolCall?.toolName?.match(/^(.+)<\|channel\|>(?:analysis|commentary|json)$/);
         if(match && Object.hasOwn(tools,match[1])) return {...repairInput.toolCall,toolName:match[1]};
         const directName=repairInput.toolCall?.toolName,directInput=repairInput.toolCall?.input;
@@ -281,4 +299,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson};

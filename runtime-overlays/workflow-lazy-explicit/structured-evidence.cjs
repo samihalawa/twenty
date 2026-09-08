@@ -18,7 +18,7 @@ function extendSchema(schema, objectName,z) {
   });
   const evidenceJSON=z.object({
     candidateDecisions:z.array(candidateDecision).optional().describe('Required when READ_CASE returns candidateThreadIds. Include every exact candidate once. Selected READ threads must be fully read before this mutation.'),
-  }).catchall(z.unknown()).describe('Structured internal evidence object. Merged into existing '+field+' and serialized by the native tool; do not escape JSON into markdown. Existing admission and manualPreparation are preserved. When READ_CASE returns candidateThreadIds, candidateDecisions is mandatory and must cover every exact ID once.');
+  }).catchall(z.unknown()).describe('Structured internal evidence delta only. Merged into existing '+field+' and serialized by the native tool; do not copy the prior stateEvidence, admission, manualPreparation or historical prose, and do not escape JSON into markdown. Existing durable keys are preserved automatically. When READ_CASE returns candidateThreadIds, candidateDecisions is mandatory and must cover every exact ID once.');
   return schema.extend({evidenceJSON:evidenceJSON.optional(),expectedUpdatedAt:z.string().datetime({offset:true}).optional().describe('Exact updatedAt from the latest find_one read. Required with evidenceJSON for atomic revision comparison.')});
 }
 function prepare(objectName,args,current) {

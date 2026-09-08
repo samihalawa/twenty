@@ -173,6 +173,16 @@ test('a directly emitted exact learned lazy tool is repaired through execute_too
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{learn_tools:{execute:async()=>({tools:[{name:'find_many_messages'}]})},execute_tool:{execute:async()=>({})}}},{enabled:true});
 });
+test('a structurally complete execute wrapper repairs only missing trailing brackets',async()=>{
+ const {closeTruncatedJson}=require('./workflow-continuation.cjs');
+ assert.deepEqual(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"case","evidenceJSON":{"candidateDecisions":[]}}'),{toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:{candidateDecisions:[]}}});
+ assert.equal(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"unfinished'),null);
+ await generateWithContinuation(async options=>{
+  const repaired=await options.experimental_repairToolCall({toolCall:{toolName:'execute_tool',input:'{"toolName":"find_one_message","arguments":{"id":"exact","select":["id","text"]}'}});
+  assert.deepEqual(repaired.input,{toolName:'find_one_message',arguments:{id:'exact',select:['id','text']}});
+  return receipt([],'STATUS: NEEDS_EVIDENCE');
+ },{tools:{execute_tool:{execute:async()=>({})}}},{enabled:true});
+});
 test('invalid final structured output receives bounded same-model repair with real steps',async()=>{
  let rounds=0;const first=page(0,null);first.response={messages:[{role:'assistant',content:'actual case read'},{role:'tool',content:'all native pages'}]};
  const result=await generateWithContinuation(async options=>{
