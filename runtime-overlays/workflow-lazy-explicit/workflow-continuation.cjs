@@ -296,7 +296,10 @@ async function generateWithContinuation(generateText, options, policy = {}) {
       const errorPart={type:'tool-error',toolCallId,toolName:'execute_tool',error:String(error)};
       synthetic={toolCalls:[callPart],toolResults:[errorPart],content:[callPart,errorPart]};
     }
-    steps.push(synthetic);messages.push(...nativeResponseMessages([synthetic],''));await options.onStepFinish?.(synthetic);
+    // Persist native values exactly, but replay the provider wire shape. Date
+    // objects are valid in Twenty records and invalid in ModelMessage content.
+    const wireSynthetic=JSON.parse(JSON.stringify(synthetic));
+    steps.push(synthetic);messages.push(...nativeResponseMessages([wireSynthetic],''));await options.onStepFinish?.(synthetic);
   }
   for (let repair = 0; ; repair++) {
     const stopConditions = Array.isArray(options.stopWhen) ? options.stopWhen : options.stopWhen ? [options.stopWhen] : [];
