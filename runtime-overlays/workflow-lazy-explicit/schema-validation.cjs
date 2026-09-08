@@ -71,6 +71,18 @@ function describeExecutionError(error) {
   return message + (details.size ? ' [' + [...details].join('; ') + ']' : '');
 }
 
+function diagnoseInvalidResponse(text, validate) {
+  if (typeof text !== 'string' || !text.trim()) return 'The provider returned no final JSON text.';
+  const trimmed=text.trim(), first=trimmed.indexOf('{'), last=trimmed.lastIndexOf('}');
+  if(first<0||last<=first)return 'The provider final response contains no complete JSON object (bytes='+Buffer.byteLength(text,'utf8')+').';
+  let value;
+  try { value=JSON.parse(trimmed.slice(first,last+1)); }
+  catch { return 'The provider final response contains malformed JSON (bytes='+Buffer.byteLength(text,'utf8')+').'; }
+  const checked=validate(value);
+  if(!checked.success)return checked.error.message;
+  return 'The provider final response contains valid JSON with unsupported surrounding content.';
+}
+
 function recoverStructuredParse(error, validate, isNoObjectError, steps = [], allowRepair = false) {
   if (!isNoObjectError || !validate || error.finishReason === 'length' ||
       typeof error.text !== 'string' || Buffer.byteLength(error.text, 'utf8') > 262144) throw error;
@@ -79,9 +91,9 @@ function recoverStructuredParse(error, validate, isNoObjectError, steps = [], al
   try { checked = parseValidatedResponse(error.text, validate); } catch (problem) { validationError=problem.message; }
   if (!checked?.success) {
     if(!allowRepair)throw error;
-    return {text:error.text,usage:error.usage,finishReason:error.finishReason,steps,nativeValidationError:validationError??'The final response must be valid JSON matching the configured response schema.'};
+    return {text:error.text,usage:error.usage,finishReason:error.finishReason,steps,nativeValidationError:validationError??diagnoseInvalidResponse(error.text,validate)};
   }
   return {text: error.text, usage: error.usage, finishReason: error.finishReason, steps};
 }
 
-module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError, recoverStructuredParse};
+module.exports = {compileResponseSchema, parseValidatedResponse, describeExecutionError, diagnoseInvalidResponse, recoverStructuredParse};

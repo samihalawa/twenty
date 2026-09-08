@@ -427,6 +427,13 @@ await test('nested SDK schema error reports the missing field without private da
  assert(message.includes('processed'));assert(!message.includes('private-source-data'));
 });
 
+await test('structured failure diagnostics report only missing schema fields',async()=>{
+ const {diagnoseInvalidResponse}=require('./schema-validation.cjs');
+ const validate=compileResponseSchema(exactSchema);
+ const message=diagnoseInvalidResponse('prefix {"runStatus":"private-source-data"} suffix',validate);
+ assert(message.includes('processed'));assert(!message.includes('private-source-data'));
+});
+
 
 await test('paid OpenRouter GPT-OSS sets supported low reasoning effort',async()=>{
  const m={sdkPackage:'@ai-sdk/openai-compatible',model:{provider:'openrouter.chat',modelId:'openai/gpt-oss-20b'}};
