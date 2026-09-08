@@ -45,8 +45,8 @@ test('opportunity evidence schema teaches exact candidate decision contract',()=
  const z=require('/app/node_modules/zod');
  const schema=extendSchema(z.object({id:z.string(),stateEvidence:z.object({markdown:z.string().optional()}).optional()}),'opportunity',z);
  const evidence=schema.shape.evidenceJSON.unwrap();
- const valid={candidateDecisions:[{threadId:'4fd9093a-3bc7-4f83-aee9-d04347c2175b',decision:'EXCLUDE',reason:'Different requisition'}]};
+ const valid={candidateDecisions:[{threadId:'4fd9093a-3bc7-4f83-aee9-d04347c2175b',decision:'EXCLUDE',reason:'Different requisition'}],sourceCoverage:{complete:true,checkedAt:'2026-09-08T03:50:43.454Z',sourceIds:[]},nextAction:{kind:'WAIT',owner:'THEM',dueAt:null,sourceIds:[]},lastReconciledAt:'2026-09-08T03:50:43.454Z'};
  assert.deepEqual(evidence.parse(valid),valid);
- assert.throws(()=>evidence.parse({candidateDecisions:[{threadId:valid.candidateDecisions[0].threadId,decision:'SKIP',reason:'Different requisition'}]}));
+ assert.throws(()=>evidence.parse({...valid,candidateDecisions:[{threadId:valid.candidateDecisions[0].threadId,decision:'SKIP',reason:'Different requisition'}]}));
  assert.match(evidence.description,/candidateDecisions is mandatory/);
 });
