@@ -410,3 +410,32 @@ test('validated AI SDK structured output is canonical when provider text is empt
  assert.equal(rounds,1);
  assert.equal(result.text,JSON.stringify(exact));
 });
+
+test('schema-valid GPT-OSS reasoning payload is canonical when final text is empty',async()=>{
+ const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
+ const exact={status:'PREPARED',content:'Verified public content'};
+ let rounds=0;
+ const result=await generateWithContinuation(async()=>{rounds++;return {text:'',reasoningText:'analysis complete\n'+JSON.stringify(exact),steps:[],finishReason:'stop',usage:{}};},{}, {enabled:true,responseSchema:schema,requireOperatorStatus:true});
+ assert.equal(rounds,1);
+ assert.equal(result.text,JSON.stringify(exact));
+});
+
+test('reasoning payload that fails the public schema remains blocked',async()=>{
+ const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
+ const result=await generateWithContinuation(async()=>({text:'',reasoningText:'{"privateAnalysis":"do not publish"}',steps:[],finishReason:'stop',usage:{}}),{}, {enabled:true,responseSchema:schema,requireOperatorStatus:true,maxRepairs:0});
+ assert.match(result.nativeExecutionError,/NO_PROGRESS_REPAIR_LIMIT_REACHED/);
+});
+
+test('valid final structured text remains authoritative over reasoning',async()=>{
+ const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
+ const exact={status:'PREPARED',content:'Final public content'};
+ const result=await generateWithContinuation(async()=>({text:JSON.stringify(exact),reasoningText:'{"privateAnalysis":"ignore"}',steps:[],finishReason:'stop',usage:{}}),{}, {enabled:true,responseSchema:schema,requireOperatorStatus:true});
+ assert.equal(result.text,JSON.stringify(exact));
+});
+
+test('multiple schema-valid reasoning objects never cross into public output',async()=>{
+ const schema={type:'object',properties:{status:{type:'string'},content:{type:'string'}},required:['status','content'],additionalProperties:false};
+ const one=JSON.stringify({status:'PREPARED',content:'One'}),two=JSON.stringify({status:'PREPARED',content:'Two'});
+ const result=await generateWithContinuation(async()=>({text:'',reasoningText:one+'\n'+two,steps:[],finishReason:'stop',usage:{}}),{}, {enabled:true,responseSchema:schema,requireOperatorStatus:true,maxRepairs:0});
+ assert.match(result.nativeExecutionError,/NO_PROGRESS_REPAIR_LIMIT_REACHED/);
+});

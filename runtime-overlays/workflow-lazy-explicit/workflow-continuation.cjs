@@ -170,9 +170,8 @@ function repairLearnToolsJson(value) {
 async function generateWithContinuation(generateText, options, policy = {}) {
   if (!policy.enabled) return generateText(options);
   const maxCalls = policy.maxToolCalls ?? 40, maxRepairs = policy.maxRepairs ?? 3;
-  const validateStructured = policy.responseSchema
-    ? require('./schema-validation.cjs').compileResponseSchema(policy.responseSchema)
-    : null;
+  const structuredValidation = policy.responseSchema ? require('./schema-validation.cjs') : null;
+  const validateStructured = structuredValidation?.compileResponseSchema(policy.responseSchema) ?? null;
   let used = 0, stalledRounds = 0, usage = {}, messages = [...(options.messages ?? [])];
   const steps = [];
   const casePages = new Map();
@@ -283,6 +282,15 @@ async function generateWithContinuation(generateText, options, policy = {}) {
         const checked = result.output === undefined ? null : validateStructured(result.output);
         if (checked?.success) result = {...result, text: JSON.stringify(checked.value), nativeValidationError: undefined};
       } catch {}
+      // GPT-OSS compatible providers can place the only final payload in the
+      // separate reasoning channel. Accept it only when one complete value
+      // independently satisfies the same closed public response schema.
+      if ((!result.text || !result.text.trim()) && typeof result.reasoningText === 'string') {
+        try {
+          const checked = structuredValidation.parseValidatedResponse(result.reasoningText, validateStructured);
+          if (checked?.success) result = {...result, text: JSON.stringify(checked.value), nativeValidationError: undefined};
+        } catch {}
+      }
     }
     const roundSteps = result.steps ?? [];
     steps.push(...roundSteps);
