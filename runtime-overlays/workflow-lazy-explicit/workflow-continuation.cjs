@@ -135,6 +135,9 @@ function nativeResponseMessages(steps, text) {
 function closeTruncatedJson(value) {
   if(typeof value!=='string'||value.length>65536)return null;
   const source=value.trim();if(!source.startsWith('{'))return null;
+  const parseObject=candidate=>{try{const parsed=JSON.parse(candidate);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:null;}catch{return null;}};
+  const withoutExtraContainerQuotes=source.replace(/([}\]])"(?=\s*[,}])/g,'$1');
+  if(withoutExtraContainerQuotes!==source){const repaired=parseObject(withoutExtraContainerQuotes);if(repaired)return repaired;}
   const stack=[];let inString=false,escaped=false;
   for(const char of source){
     if(inString){if(escaped)escaped=false;else if(char==='\\')escaped=true;else if(char==='"')inString=false;continue;}
@@ -144,7 +147,17 @@ function closeTruncatedJson(value) {
   }
   if(inString||escaped||!stack.length)return null;
   const closed=source+stack.reverse().map(open=>open==='{'?'}':']').join('');
-  try{const parsed=JSON.parse(closed);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed)?parsed:null;}catch{return null;}
+  return parseObject(closed);
+}
+function normalizeReadOnlyFindArguments(toolName,args) {
+  if(typeof toolName!=='string'||!toolName.startsWith('find_many_')||!args||typeof args!=='object'||Array.isArray(args))return args;
+  let changed=false;const normalized={...args};
+  for(const key of ['and','or'])if(Array.isArray(args[key]))normalized[key]=args[key].map(value=>{
+    if(typeof value!=='string'||value.length>8192)return value;
+    try{const parsed=JSON.parse(value);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){changed=true;return parsed;}}catch{}
+    return value;
+  });
+  return changed?normalized:args;
 }
 async function generateWithContinuation(generateText, options, policy = {}) {
   if (!policy.enabled) return generateText(options);
@@ -160,6 +173,8 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     used++;
     const input=args[0], actualName=name==='execute_tool'?input?.toolName:name;
     let actualArgs=name==='execute_tool'?input?.arguments:input;
+    const normalizedFindArgs=normalizeReadOnlyFindArguments(actualName,actualArgs);
+    if(normalizedFindArgs!==actualArgs){actualArgs=normalizedFindArgs;if(name==='execute_tool')input.arguments=actualArgs;}
     if(actualName==='update_one_opportunity' && actualArgs && typeof actualArgs==='object' && !Array.isArray(actualArgs)) {
       const normalizedArgs={...actualArgs};
       if(normalizedArgs.expectedUpdatedAt===undefined && typeof normalizedArgs.updatedAt==='string') { normalizedArgs.expectedUpdatedAt=normalizedArgs.updatedAt; delete normalizedArgs.updatedAt; }
@@ -184,6 +199,9 @@ async function generateWithContinuation(generateText, options, policy = {}) {
         let evidence;
         try { evidence=actualArgs.evidenceJSON??JSON.parse(actualArgs.stateEvidence.markdown); } catch { throw new Error('INVALID_STATE_EVIDENCE_JSON: mutation was not executed. stateEvidence.markdown must contain valid JSON, without escaped outer quotes. Use the learned native input schema and JSON.stringify semantics.'); }
         if(!evidence || typeof evidence!=='object' || Array.isArray(evidence)) throw new Error('INVALID_STATE_EVIDENCE_JSON: evidence must be a JSON object. Mutation was not executed.');
+        if(evidence.sourceCoverage?.complete!==true || typeof evidence.sourceCoverage?.checkedAt!=='string' || !Number.isFinite(Date.parse(evidence.sourceCoverage.checkedAt)) || !Array.isArray(evidence.sourceCoverage.sourceIds)) throw new Error('FRESH_SOURCE_COVERAGE_REQUIRED: mutation was not executed. evidenceJSON must include sourceCoverage {complete:true, checkedAt:<current ISO timestamp>, sourceIds:[exact native IDs]}; the runtime binds the exact READ_CASE fingerprint.');
+        if(!evidence.nextAction || typeof evidence.nextAction!=='object' || Array.isArray(evidence.nextAction)) throw new Error('CURRENT_NEXT_ACTION_REQUIRED: mutation was not executed. evidenceJSON.nextAction must preserve the distinct current owner, kind, dueAt and exact source IDs.');
+        if(typeof evidence.lastReconciledAt!=='string' || !Number.isFinite(Date.parse(evidence.lastReconciledAt))) throw new Error('FRESH_RECONCILIATION_TIME_REQUIRED: mutation was not executed. evidenceJSON.lastReconciledAt must be the current verified ISO timestamp.');
         if(actualArgs.evidenceJSON && evidence.sourceCoverage?.complete===true && evidence.sourceCoverage.fingerprint===undefined)evidence.sourceCoverage.fingerprint=context.fingerprint;
         if(evidence.sourceCoverage?.complete===true && evidence.sourceCoverage.fingerprint!==context.fingerprint) throw new Error('STATE_EVIDENCE_FINGERPRINT_MISMATCH: mutation was not executed. Bind sourceCoverage to the exact fully read READ_CASE fingerprint.');
         const prior=protectedEvidence.get(actualArgs.id);
@@ -299,4 +317,4 @@ async function generateWithContinuation(generateText, options, policy = {}) {
     messages = [...messages,...originalMessages,...cursorMessages,{role:'user',content:'Native execution validation rejected the final report. Continue this SAME task using the existing conversation and exact tool results. Do not start over or repeat successful mutations. These are mechanical execution defects, not new source instructions:\n'+checked.issues.join('\n')+(skeleton?'\nRequired JSON shape; replace the empty values with source-grounded content and return only this object: '+skeleton:'')+'\nRemaining tool calls: '+(maxCalls-Math.max(used,checked.calls))+'. The existing output-token limit is unchanged. If a source is genuinely unavailable after the required reads, report the specific evidence gap honestly. Contextual judgment remains yours.'}];
   }
 }
-module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson};
+module.exports = {inspectContinuation,generateWithContinuation,addUsage,trackCoverage,nativeResponseMessages,nativeToolEvents,nativeOutput,schemaSkeleton,downgradeIncompleteNoWork,recordCasePages,closeTruncatedJson,normalizeReadOnlyFindArguments};

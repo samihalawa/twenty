@@ -16,8 +16,23 @@ function extendSchema(schema, objectName,z) {
     decision:z.enum(['READ','EXCLUDE']).describe('READ only after full native message pagination; EXCLUDE only with a source-based reason.'),
     reason:z.string().min(1).describe('Short source-based reason for reading or excluding this exact thread.'),
   });
+  const sourceCoverage=z.object({
+    complete:z.literal(true).describe('True only after every bound READ_CASE page and every selected detached source body was read.'),
+    checkedAt:z.string().datetime({offset:true}).describe('Current run verification time from the server clock.'),
+    sourceIds:z.array(z.string().uuid()).describe('Exact native message, event, recording or other source UUIDs used for the current decision.'),
+    fingerprint:z.string().optional().describe('Omit when unavailable; the runtime binds the exact fully read case fingerprint.'),
+  });
+  const nextAction=z.object({
+    kind:z.string().min(1).describe('Concrete action kind such as WAIT, REPLY, MEETING, DOCUMENT or TASK.'),
+    owner:z.enum(['SAMI','THEM','SHARED']).describe('Who owns this exact next action.'),
+    dueAt:z.string().datetime({offset:true}).nullable().describe('Verified exact due time, or null when no exact time is supported.'),
+    sourceIds:z.array(z.string().uuid()).describe('Exact native evidence IDs supporting this action.'),
+  }).catchall(z.unknown());
   const evidenceJSON=z.object({
     candidateDecisions:z.array(candidateDecision).optional().describe('Required when READ_CASE returns candidateThreadIds. Include every exact candidate once. Selected READ threads must be fully read before this mutation.'),
+    sourceCoverage:sourceCoverage.describe('Fresh complete source coverage for this exact run. Required on every opportunity update.'),
+    nextAction:nextAction.describe('Current action kept distinct from response ownership and other open tasks.'),
+    lastReconciledAt:z.string().datetime({offset:true}).describe('Current server-clock reconciliation timestamp.'),
   }).catchall(z.unknown()).describe('Structured internal evidence delta only. Merged into existing '+field+' and serialized by the native tool; do not copy the prior stateEvidence, admission, manualPreparation or historical prose, and do not escape JSON into markdown. Existing durable keys are preserved automatically. When READ_CASE returns candidateThreadIds, candidateDecisions is mandatory and must cover every exact ID once.');
   return schema.extend({evidenceJSON:evidenceJSON.optional(),expectedUpdatedAt:z.string().datetime({offset:true}).optional().describe('Exact updatedAt from the latest find_one read. Required with evidenceJSON for atomic revision comparison.')});
 }
@@ -32,6 +47,7 @@ function prepare(objectName,args,current) {
   if(incoming!==undefined && (!incoming || typeof incoming!=='object' || Array.isArray(incoming)))throw Error('evidenceJSON must be a JSON object.');
   let previous={};
   if(typeof current[field]?.markdown==='string')try {const parsed=JSON.parse(current[field].markdown);if(parsed && typeof parsed==='object'&&!Array.isArray(parsed))previous=parsed;} catch {} // Legacy malformed interpretation is replaced; no fictitious structure is invented.
+  delete previous.stateEvidence; // Remove the proven recursive legacy copy instead of preserving and reserializing it forever.
   for(const key of ['admission','manualPreparation','autonomousPreparation'])if(previous[key]!==undefined && incoming?.[key]!==undefined && !isDeepStrictEqual(previous[key],incoming[key]))throw Error('PROTECTED_EVIDENCE_CONFLICT: preserve existing '+key+'; no mutation executed.');
   const {id,evidenceJSON,expectedUpdatedAt,...data}=args;
   if(field && incoming!==undefined)data[field]={markdown:JSON.stringify({...previous,...incoming,...Object.fromEntries(['admission','manualPreparation','autonomousPreparation'].filter(k=>previous[k]!==undefined).map(k=>[k,previous[k]]))})};

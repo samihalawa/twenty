@@ -5,6 +5,7 @@ let seq = 0;
 const step = (name,args,result,ok=true) => {const id=String(++seq);return {toolCalls:[{toolName:'execute_tool',toolCallId:id,input:{toolName:name,arguments:args}}],toolResults:[{type:'tool-result',toolCallId:id,output:{success:ok,result}}],content:[]};};
 const page = (cursor,next) => step('app_crm_case_context',{mode:'READ_CASE',opportunityId:'case',cursor},{mode:'READ_CASE',opportunityId:'case',cursor,nextCursor:next,hasNextPage:next!==null,totalSections:next===4||cursor===4?6:4,providerPaginationComplete:true,sections:Array.from({length:(next??(cursor===4?6:4))-cursor},(_,i)=>({sourceId:'message-'+(cursor+i)})),fingerprint:'hash',nextRead:next===null?null:{toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:next,fingerprint:'hash'}}});
 const receipt = (steps,text='STATUS: COMPLETED') => ({steps,text,finishReason:'stop',usage:{inputTokens:10,outputTokens:5},response:{messages:[{role:'assistant',content:'native response '+seq}]}});
+const freshEvidence = (extra={}) => ({sourceCoverage:{complete:true,checkedAt:'2026-09-08T03:50:43.454Z',sourceIds:[]},nextAction:{kind:'WAIT',owner:'THEM',dueAt:null,sourceIds:[]},lastReconciledAt:'2026-09-08T03:50:43.454Z',...extra});
 test('unfinished exact pages require continuation even under needs-evidence label',()=>{
  assert.match(inspectContinuation([page(0,2)],'STATUS: NEEDS_EVIDENCE').issues[0],/Unread source pages/);
 });
@@ -133,7 +134,7 @@ test('actual opportunity mutation is blocked until exact pages are complete and 
   await execute({toolName:'app_crm_case_context',arguments:{opportunityId:'case',cursor:2}});
   await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'other'}}),/CASE_CONTEXT_INCOMPLETE/);
   await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'case',stateEvidence:{markdown:'{\\"invalid\\":true}'}}}),/INVALID_STATE_EVIDENCE_JSON/);
-  await execute({toolName:'update_one_opportunity',arguments:{id:'case',updatedAt:'2026-09-08T03:27:39.156Z',stateEvidence:{sourceCoverage:{complete:true,fingerprint:'hash'}},candidateDecisions:[]}});
+  await execute({toolName:'update_one_opportunity',arguments:{id:'case',updatedAt:'2026-09-08T03:27:39.156Z',stateEvidence:freshEvidence({sourceCoverage:{complete:true,checkedAt:'2026-09-08T03:50:43.454Z',sourceIds:[],fingerprint:'hash'}}),candidateDecisions:[]}});
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{execute_tool:{execute:async input=>{
   if(input.toolName==='update_one_opportunity'){writes++;normalizedWrite=input.arguments;return {success:true,result:{id:'case'}};}
@@ -141,7 +142,7 @@ test('actual opportunity mutation is blocked until exact pages are complete and 
  }}}},{enabled:true});
  assert.equal(writes,1);
  assert.equal(normalizedWrite.expectedUpdatedAt,'2026-09-08T03:27:39.156Z');assert.equal(normalizedWrite.updatedAt,undefined);
- assert.deepEqual(normalizedWrite.evidenceJSON,{sourceCoverage:{complete:true,fingerprint:'hash'},candidateDecisions:[]});assert.equal(normalizedWrite.stateEvidence,undefined);
+ assert.deepEqual(normalizedWrite.evidenceJSON,{...freshEvidence({sourceCoverage:{complete:true,checkedAt:'2026-09-08T03:50:43.454Z',sourceIds:[],fingerprint:'hash'}}),candidateDecisions:[]});assert.equal(normalizedWrite.stateEvidence,undefined);
 });
 test('structured parse recovery keeps real step messages inside the continuation loop',async()=>{
  let rounds=0;const originalError=new Error('native structured parse');
@@ -174,9 +175,12 @@ test('a directly emitted exact learned lazy tool is repaired through execute_too
  },{tools:{learn_tools:{execute:async()=>({tools:[{name:'find_many_messages'}]})},execute_tool:{execute:async()=>({})}}},{enabled:true});
 });
 test('a structurally complete execute wrapper repairs only missing trailing brackets',async()=>{
- const {closeTruncatedJson}=require('./workflow-continuation.cjs');
- assert.deepEqual(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"case","evidenceJSON":{"candidateDecisions":[]}}'),{toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:{candidateDecisions:[]}}});
- assert.equal(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"unfinished'),null);
+ const {closeTruncatedJson,normalizeReadOnlyFindArguments}=require('./workflow-continuation.cjs');
+  assert.deepEqual(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"case","evidenceJSON":{"candidateDecisions":[]}}'),{toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:{candidateDecisions:[]}}});
+ assert.deepEqual(closeTruncatedJson('{"toolName":"find_many_calendar_event_participants","arguments":{"calendarEventId":{"eq":"00000000-0000-4000-8000-000000000000"}","select":["id"]}}'),{toolName:'find_many_calendar_event_participants',arguments:{calendarEventId:{eq:'00000000-0000-4000-8000-000000000000'},select:['id']}});
+  assert.equal(closeTruncatedJson('{"toolName":"update_one_opportunity","arguments":{"id":"unfinished'),null);
+ assert.deepEqual(normalizeReadOnlyFindArguments('find_many_call_recordings',{and:[{startedAt:{gte:'a'}},'{"startedAt":{"lt":"b"}}'],select:['id']}),{and:[{startedAt:{gte:'a'}},{startedAt:{lt:'b'}}],select:['id']});
+ assert.deepEqual(normalizeReadOnlyFindArguments('update_one_call_recording',{and:['{"id":{"eq":"x"}}']}),{and:['{"id":{"eq":"x"}}']});
  await generateWithContinuation(async options=>{
   const repaired=await options.experimental_repairToolCall({toolCall:{toolName:'execute_tool',input:'{"toolName":"find_one_message","arguments":{"id":"exact","select":["id","text"]}'}});
   assert.deepEqual(repaired.input,{toolName:'find_one_message',arguments:{id:'exact',select:['id','text']}});
@@ -204,7 +208,7 @@ test('native execution binds opaque fingerprint and evidence from exact read rec
   const a=await execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:0}});
   assert.equal(a.result.nextRead.arguments.fingerprint,undefined);
   await execute(a.result.nextRead);
-  await execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:{sourceCoverage:{complete:true}}}});
+  await execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:freshEvidence()}});
   return receipt([],'STATUS: NEEDS_EVIDENCE');
  },{tools:{execute_tool:{execute:async input=>{
   if(input.toolName==='update_one_opportunity'){assert.equal(input.arguments.evidenceJSON.sourceCoverage.fingerprint,'full-native-fingerprint');return {success:true,result:{id:'case'}};}
@@ -222,7 +226,7 @@ test('candidate index cannot authorize a mutation until exact selected bodies ar
   const execute=opts.tools.execute_tool.execute;
   await execute({toolName:'app_crm_case_context',arguments:{mode:'READ_CASE',opportunityId:'case',cursor:0}});
   await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON:{}}}),/CANDIDATE_CONTEXT_DECISIONS_MISSING/);
-  const evidenceJSON={candidateDecisions:[{threadId:'thread',decision:'READ',reason:'Exact current request'}]};
+  const evidenceJSON=freshEvidence({candidateDecisions:[{threadId:'thread',decision:'READ',reason:'Exact current request'}]});
   await assert.rejects(execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON}}),/SELECTED_CONTEXT_READ_INCOMPLETE/);
   await execute({toolName:'find_many_messages',arguments:{messageThreadId:{eq:'thread'},select:['id','messageThreadId','text'],offset:0,limit:5}});
   await execute({toolName:'update_one_opportunity',arguments:{id:'case',evidenceJSON}});
